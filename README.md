@@ -68,7 +68,7 @@ tests/
 
 | 이름 | 담당 |
 |---|---|
-| 임혜랑 (팀장) | KakaoWork, Notion 수집 |
+| 임혜량 (팀장) | KakaoWork, Notion 수집 |
 | 마준서 | KakaoWork, 임베딩·벡터 DB |
 | 이인아 | Slack, Claude 연동 |
 | 송준호 | Slack 수집, 테스트 |

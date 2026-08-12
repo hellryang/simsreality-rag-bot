@@ -26,7 +26,7 @@
 | 참여기업 | ㈜심스리얼리티 |
 | 멘토 | 이후경 연구소장 (hoo@simsreality.com) |
 | 수행기간 | 2026.07.27 ~ 2026.09.18 (8주, 멘토링 8회차) |
-| 팀 구성 | 임혜랑(팀장·KakaoWork), 마준서(KakaoWork), 이인아(Slack), 송준호(Slack) |
+| 팀 구성 | 임혜량(팀장·KakaoWork), 마준서(KakaoWork), 이인아(Slack), 송준호(Slack) |
 | 코칭 회차 | 3차(08.12) / 5차(08.26) / 7차(09.09) |
 | 오프라인 대면회의 | 담양 (확정) |
 | 최종 산출물 | 소스코드 + 배포 URL(Railway/Render) + 결과보고서 + 발표자료 |
@@ -216,7 +216,7 @@ git push -u origin main
 - 브랜치: `main`(배포) / `develop`(통합) / `feature/기능명`
 - 커밋 접두사: `feat:` `fix:` `docs:` `refactor:` `test:`
 - PR은 최소 1인 리뷰 후 `develop`에 병합. **코칭 회차(3차·5차·7차) 전날까지 최신 코드를 push**한다.
-- KakaoWork팀(임혜랑·마준서)과 Slack팀(이인아·송준호)이 각자 어댑터를 맡되, `qa_pipeline.py`와 `vector_store.py`는 공용이므로 변경 시 반드시 PR로 공유한다.
+- KakaoWork팀(임혜량·마준서)과 Slack팀(이인아·송준호)이 각자 어댑터를 맡되, `qa_pipeline.py`와 `vector_store.py`는 공용이므로 변경 시 반드시 PR로 공유한다.
 - 프로젝트 일정·문서의 원본(source of truth)은 Notion 워크스페이스다.
 
 ---

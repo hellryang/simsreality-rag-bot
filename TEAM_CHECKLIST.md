@@ -35,7 +35,7 @@
 
 ## 2. 회의 전 — 개인별
 
-### 임혜랑 (팀장 · KakaoWork)
+### 임혜량 (팀장 · KakaoWork)
 
 - [ ] GitHub **private** 레포 생성 후 팀원 3명 초대
 - [ ] `git init` → 첫 커밋 → push
@@ -102,7 +102,7 @@
 
 | 담당 | 파일 | 목표 |
 |---|---|---|
-| 임혜랑 | `app/services/notion_service.py` | 수집 검증 + 페이지 전체 수집 확인 |
+| 임혜량 | `app/services/notion_service.py` | 수집 검증 + 페이지 전체 수집 확인 |
 | 마준서 | `app/services/embedder.py`, `vector_store.py` | 청킹 300/50 + ChromaDB 적재·검색 동작 |
 | 이인아 | `app/services/claude_service.py` | Claude 호출 + 출처 인용 시스템 프롬프트 |
 | 송준호 | `app/services/slack_service.py`, `tests/` | Slack 메시지 수집 + 첫 테스트 작성 |
