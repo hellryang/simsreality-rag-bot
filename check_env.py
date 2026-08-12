@@ -18,7 +18,8 @@ ENV_PATH = Path(__file__).parent / ".env"
 # (환경변수명, 설명, 형식검사, 오늘 데모에 필요한가)
 CHECKS: list[tuple[str, str, re.Pattern[str] | None, bool]] = [
     ("NOTION_API_KEY",       "Notion Integration 시크릿",  re.compile(r"^(ntn_|secret_)\S{20,}$"), True),
-    ("NOTION_DATABASE_ID",   "수집할 Notion DB의 ID",      re.compile(r"^[0-9a-fA-F-]{32,36}$"),   True),
+    ("NOTION_ROOT_PAGE_ID",  "문서들이 달린 상위 페이지 ID", re.compile(r"^[0-9a-fA-F-]{32,36}$"),   True),
+    ("NOTION_DATABASE_ID",   "DB 방식으로 쓸 때만 (선택)",  re.compile(r"^[0-9a-fA-F-]{32,36}$"),   False),
     ("ANTHROPIC_API_KEY",    "Claude API 키",              re.compile(r"^sk-ant-\S{20,}$"),        False),
     ("ANTHROPIC_MODEL",      "사용할 Claude 모델명",        None,                                   False),
     ("SLACK_BOT_TOKEN",      "Slack 봇 토큰",               re.compile(r"^xoxb-\S{10,}$"),          False),
@@ -89,7 +90,25 @@ def check_notion(values: dict[str, str]) -> None:
 
     async def _run() -> None:
         client = AsyncClient(auth=values["NOTION_API_KEY"])
+        root_page_id = values.get("NOTION_ROOT_PAGE_ID", "")
         try:
+            if root_page_id and not is_placeholder(root_page_id):
+                # 페이지 방식: 하위 페이지가 몇 개나 붙어 있는지 센다.
+                response = await client.blocks.children.list(
+                    block_id=root_page_id, page_size=100
+                )
+                children = [
+                    b.get("child_page", {}).get("title", "(제목 없음)")
+                    for b in response.get("results", [])
+                    if b.get("type") == "child_page"
+                ]
+                print(f"\n[O] Notion 접속 성공. 하위 페이지 {len(children)}건 발견.")
+                for name in children:
+                    print(f"    - {name}")
+                if not children:
+                    print("    하위 페이지가 없습니다. ID가 맞는지 확인하세요.")
+                return
+
             response = await client.databases.query(
                 database_id=values["NOTION_DATABASE_ID"], page_size=1
             )

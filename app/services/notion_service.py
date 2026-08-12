@@ -91,13 +91,26 @@ def _extract_title(page: dict[str, Any]) -> str:
     return "(제목 없음)"
 
 
-async def _fetch_page_text(client: AsyncClient, page_id: str) -> str:
-    """페이지 본문 블록을 읽어 하나의 문자열로 합친다.
+def _extract_child_pages(blocks: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """블록 목록에서 하위 페이지의 (id, 제목)만 뽑는다.
 
-    하위 블록(자식)까지 재귀로 따라가지는 않는다. 1단계 깊이만 읽어도
-    회의록·업무 문서 대부분의 본문은 확보된다.
+    Notion은 페이지 안에 끼워 넣은 하위 페이지를 `child_page` 타입 블록으로 준다.
+    문단·표·하위 데이터베이스는 문서가 아니므로 여기서 걸러진다.
     """
-    lines: list[str] = []
+    return [
+        (block["id"], block.get("child_page", {}).get("title", "(제목 없음)"))
+        for block in blocks
+        if block.get("type") == "child_page"
+    ]
+
+
+async def _list_all_blocks(client: AsyncClient, page_id: str) -> list[dict[str, Any]]:
+    """페이지에 달린 블록을 페이지네이션까지 따라가며 전부 가져온다.
+
+    Notion은 한 번에 최대 100개만 주고, 더 있으면 `has_more`와 `next_cursor`로
+    알려준다. 커서를 따라가지 않으면 긴 문서의 뒷부분이 통째로 누락된다.
+    """
+    blocks: list[dict[str, Any]] = []
     cursor: str | None = None
 
     while True:
@@ -108,18 +121,30 @@ async def _fetch_page_text(client: AsyncClient, page_id: str) -> str:
             page_size=100,
             **({"start_cursor": cursor} if cursor else {}),
         )
-
-        for block in response.get("results", []):
-            block_type = block.get("type")
-            if block_type not in _TEXT_BLOCK_TYPES:
-                continue
-            text = _extract_plain_text(block.get(block_type, {}).get("rich_text", []))
-            if text.strip():
-                lines.append(text)
+        blocks.extend(response.get("results", []))
 
         if not response.get("has_more"):
             break
         cursor = response.get("next_cursor")
+
+    return blocks
+
+
+async def _fetch_page_text(client: AsyncClient, page_id: str) -> str:
+    """페이지 본문 블록을 읽어 하나의 문자열로 합친다.
+
+    하위 블록(자식)까지 재귀로 따라가지는 않는다. 1단계 깊이만 읽어도
+    회의록·업무 문서 대부분의 본문은 확보된다.
+    """
+    lines: list[str] = []
+
+    for block in await _list_all_blocks(client, page_id):
+        block_type = block.get("type")
+        if block_type not in _TEXT_BLOCK_TYPES:
+            continue
+        text = _extract_plain_text(block.get(block_type, {}).get("rich_text", []))
+        if text.strip():
+            lines.append(text)
 
     return "\n".join(lines)
 
@@ -182,12 +207,115 @@ async def collect_notion_documents(limit: int | None = None) -> list[dict[str, A
     return documents
 
 
+async def _build_document(
+    client: AsyncClient, page_id: str, title: str
+) -> dict[str, Any] | None:
+    """페이지 하나를 읽어 수집 결과 dict 한 건으로 만든다.
+
+    본문이 비어 있으면 제목만으로도 검색에 쓸모가 있으므로 버리지 않는다.
+    """
+    body = await _fetch_page_text(client, page_id)
+
+    await asyncio.sleep(_REQUEST_INTERVAL_SEC)
+    meta = await _with_backoff(client.pages.retrieve, page_id=page_id)
+
+    return {
+        "text": f"{title}\n{body}".strip(),
+        "source": "notion",
+        "url": meta.get("url", ""),
+        "title": title,
+        "created_at": meta.get("created_time", ""),
+    }
+
+
+async def collect_notion_page_tree(
+    root_page_id: str,
+    limit: int | None = None,
+    max_depth: int = 2,
+    include_root: bool = False,
+) -> list[dict[str, Any]]:
+    """페이지 아래에 하위 페이지로 붙어 있는 문서들을 수집한다.
+
+    우리 Notion은 '2026 일경험 프로젝트' 페이지 밑에 회의록·계획서 같은 문서가
+    하위 페이지로 달려 있는 구조다. 데이터베이스가 아니므로
+    `collect_notion_documents()`(databases.query 방식)로는 읽히지 않는다.
+
+    Args:
+        root_page_id: 기준이 되는 페이지 ID
+        limit: 가져올 최대 문서 수. None이면 전체
+        max_depth: 하위의 하위까지 몇 단계나 따라갈지. 1이면 바로 아래만
+        include_root: 기준 페이지 본문 자체도 문서로 넣을지.
+            기본값 False다. 프로젝트 최상단 페이지에는 팀원 명단처럼
+            개인정보가 섞이기 쉬워서, 명시적으로 켤 때만 넣는다.
+
+    Returns:
+        [{"text", "source", "url", "title", "created_at"}, ...]
+    """
+    client = AsyncClient(auth=settings.notion_api_key)
+    documents: list[dict[str, Any]] = []
+    visited: set[str] = set()
+
+    async def _walk(page_id: str, title: str, depth: int) -> None:
+        if page_id in visited or (limit is not None and len(documents) >= limit):
+            return
+        visited.add(page_id)
+
+        document = await _build_document(client, page_id, title)
+        if document:
+            documents.append(document)
+            logger.info("수집: %s", title)
+
+        if depth >= max_depth:
+            return
+
+        children = _extract_child_pages(await _list_all_blocks(client, page_id))
+        for child_id, child_title in children:
+            if limit is not None and len(documents) >= limit:
+                return
+            await _walk(child_id, child_title, depth + 1)
+
+    try:
+        blocks = await _list_all_blocks(client, root_page_id)
+
+        if include_root:
+            await _walk(root_page_id, _root_title(await _with_backoff(
+                client.pages.retrieve, page_id=root_page_id)), 0)
+
+        for child_id, child_title in _extract_child_pages(blocks):
+            if limit is not None and len(documents) >= limit:
+                break
+            await _walk(child_id, child_title, 1)
+
+    finally:
+        await client.aclose()
+
+    logger.info("Notion 하위 페이지 %d건 수집 완료", len(documents))
+    return documents
+
+
+def _root_title(page: dict[str, Any]) -> str:
+    """최상단 페이지의 제목을 꺼낸다. 페이지는 properties 구조가 DB와 다르다."""
+    title_prop = page.get("properties", {}).get("title", {})
+    return _extract_plain_text(title_prop.get("title", [])) or "(제목 없음)"
+
+
 if __name__ == "__main__":
     # 단독 실행 확인용: python -m app.services.notion_service
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     async def _main() -> None:
-        docs = await collect_notion_documents(limit=5)
+        # 설정된 쪽으로 자동 선택한다. 페이지 방식을 우선한다.
+        if settings.notion_root_page_id:
+            print("수집 방식: 페이지 하위 문서 (NOTION_ROOT_PAGE_ID)")
+            docs = await collect_notion_page_tree(settings.notion_root_page_id, limit=5)
+        elif settings.notion_database_id:
+            print("수집 방식: 데이터베이스 (NOTION_DATABASE_ID)")
+            docs = await collect_notion_documents(limit=5)
+        else:
+            print("[!] .env에 NOTION_ROOT_PAGE_ID 또는 NOTION_DATABASE_ID 중")
+            print("    하나는 채워야 합니다.")
+            return
+
         print(f"\n수집된 문서: {len(docs)}건\n")
         for i, doc in enumerate(docs, start=1):
             preview = doc["text"][:80].replace("\n", " ")

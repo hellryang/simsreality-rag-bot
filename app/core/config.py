@@ -6,7 +6,13 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     notion_api_key: str
-    notion_database_id: str
+    # 수집 대상은 둘 중 하나만 있으면 된다.
+    #   notion_database_id  : 문서가 데이터베이스(표)에 행으로 쌓여 있을 때
+    #   notion_root_page_id : 문서가 어떤 페이지 밑에 하위 페이지로 달려 있을 때
+    # 우리 워크스페이스는 '2026 일경험 프로젝트' 페이지 아래에 문서가 달린 구조라
+    # notion_root_page_id 쪽을 쓴다.
+    notion_database_id: str | None = None
+    notion_root_page_id: str | None = None
 
     anthropic_api_key: str
     anthropic_model: str = "claude-haiku-4-5-20251001"

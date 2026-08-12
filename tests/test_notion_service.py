@@ -5,7 +5,11 @@ API 응답을 흉내 낸 dict를 넣어서 '뽑아내는 로직'만 검증한다
 그래서 API 키 없이도, 인터넷 없이도, 몇 밀리초 만에 돌아간다.
 """
 from app.models.schemas import Document
-from app.services.notion_service import _extract_plain_text, _extract_title
+from app.services.notion_service import (
+    _extract_child_pages,
+    _extract_plain_text,
+    _extract_title,
+)
 
 
 def test_rich_text_fragments_are_joined():
@@ -47,6 +51,45 @@ def test_missing_title_falls_back_to_placeholder():
     page = {"properties": {"이름": {"type": "title", "title": []}}}
 
     assert _extract_title(page) == "(제목 없음)"
+
+
+def test_child_pages_are_extracted_with_id_and_title():
+    """페이지 밑에 달린 하위 페이지 목록을 뽑아낸다.
+
+    우리 Notion은 '2026 일경험 프로젝트' 페이지 아래에 문서들이 하위 페이지로
+    붙어 있는 구조다. 데이터베이스가 아니므로 databases.query로는 못 읽는다.
+    Notion은 하위 페이지를 `child_page` 타입 블록으로 돌려준다.
+    """
+    blocks = [
+        {"id": "aaa", "type": "child_page", "child_page": {"title": "프로젝트 문제정의"}},
+        {"id": "bbb", "type": "child_page", "child_page": {"title": "회의 내용"}},
+    ]
+
+    assert _extract_child_pages(blocks) == [
+        ("aaa", "프로젝트 문제정의"),
+        ("bbb", "회의 내용"),
+    ]
+
+
+def test_non_page_blocks_are_ignored_when_listing_children():
+    """본문 문단이나 표는 하위 페이지가 아니므로 목록에서 빠져야 한다.
+
+    표(table)를 걸러내는 것은 특히 중요하다. 우리 프로젝트 페이지의 표에는
+    팀원 연락처가 들어 있어서, 문서로 취급하면 개인정보가 딸려 들어간다.
+    """
+    blocks = [
+        {"id": "p1", "type": "paragraph", "paragraph": {"rich_text": []}},
+        {"id": "t1", "type": "table", "table": {}},
+        {"id": "aaa", "type": "child_page", "child_page": {"title": "운영비용"}},
+        {"id": "d1", "type": "child_database", "child_database": {"title": "새 데이터베이스"}},
+    ]
+
+    assert _extract_child_pages(blocks) == [("aaa", "운영비용")]
+
+
+def test_page_without_children_returns_empty_list():
+    """하위 페이지가 하나도 없어도 예외 없이 빈 목록을 돌려준다."""
+    assert _extract_child_pages([]) == []
 
 
 def test_collected_shape_matches_document_schema():
