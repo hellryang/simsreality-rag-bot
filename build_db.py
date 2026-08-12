@@ -102,7 +102,12 @@ def main() -> None:
     print(f"\n완료. 벡터 DB에 조각 {total}개가 들어 있습니다.")
     print(f"저장 위치: {settings.chroma_persist_dir}")
     print("\n다음 명령으로 검색을 확인하세요 (Claude 키 없이 됩니다):")
-    print('  python -m app.services.qa_pipeline --search "배포는 어디에 하나요"')
+    print('  python -m app.services.qa_pipeline --search "질문을 여기에"')
+    print("\n질문은 방금 적재된 문서에 실제로 있는 내용으로 하세요.")
+    print("없는 내용을 물으면 유사도 0.4 미만의 엉뚱한 문서가 나옵니다.")
+    print("적재된 문서:")
+    for title in sorted({d.title for d in documents}):
+        print(f"  - {title}")
 
 
 if __name__ == "__main__":
