@@ -121,10 +121,16 @@ git push -u origin feature/notion-collect
 ## 실행 명령 모음
 
 ```bash
-uvicorn app.main:app --reload --port 8000     # 개발 서버
-python -m app.services.notion_service          # Notion 수집 단독 확인
-pytest -q                                      # 테스트 전체
+.venv\Scripts\activate                                    # 매번 먼저 (Windows)
+python build_db.py                                        # Notion 수집 → 벡터 DB 적재
+python -m app.services.qa_pipeline --search "질문"        # 의미 검색만 (Claude 키 불필요)
+python -m app.services.qa_pipeline "질문"                 # 출처 붙은 답변
+uvicorn app.main:app --reload --port 8000                 # 개발 서버
+pytest -q                                                 # 테스트 전체
 ```
+
+각 명령이 무엇을 하는지, 결과가 어떻게 나오는지, 오류가 났을 때 어떻게 하는지는
+**[RUNBOOK.md](./RUNBOOK.md)** 에 정리돼 있습니다.
 
 ---
 
@@ -134,5 +140,6 @@ pytest -q                                      # 테스트 전체
 |---|---|
 | [CLAUDE.md](./CLAUDE.md) | 확정 아키텍처, 기술 스택, 코딩 규칙 (변경 금지 항목 포함) |
 | [TEAM_CHECKLIST.md](./TEAM_CHECKLIST.md) | 주차별 실행 체크리스트와 역할 분담 |
+| [RUNBOOK.md](./RUNBOOK.md) | 터미널 명령어 순서, 결과 예시, 오류 대처법 |
 
 일정·회의록의 원본은 Notion 워크스페이스입니다.
