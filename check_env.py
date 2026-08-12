@@ -3,8 +3,9 @@
 키 값은 **절대 화면에 출력하지 않는다.** 자리표시자인지, 형식이 맞는지만 알려준다.
 캡처를 팀 채널에 올려도 안전하도록 만든 것이다.
 
-    python check_env.py           형식만 점검 (외부 API 호출 없음, 즉시 끝남)
-    python check_env.py --notion  Notion에 실제로 접속해서 확인
+    python check_env.py                형식만 점검 (외부 API 호출 없음, 즉시 끝남)
+    python check_env.py --notion       Notion에 실제로 접속해서 확인
+    python check_env.py --id "<주소>"   Notion 주소에서 DATABASE_ID만 뽑아내기
 """
 from __future__ import annotations
 
@@ -119,7 +120,54 @@ def check_notion(values: dict[str, str]) -> None:
     asyncio.run(_run())
 
 
+def extract_database_id(url: str) -> str | None:
+    """Notion 주소에서 데이터베이스 ID(32자리)를 뽑아낸다.
+
+    주소는 보통 이렇게 생겼다.
+
+        https://www.notion.so/myteam/회의록-1a2b3c4d...7890?v=9f8e7d...
+
+    `?v=` 뒤에도 32자리 값이 하나 더 붙는데 그건 '보기(view) ID'라서 쓰면 안 된다.
+    그래서 물음표 뒤를 먼저 잘라내고 찾는다. 여기서 틀리는 경우가 가장 많다.
+    """
+    path = url.split("?")[0]
+    matches = re.findall(
+        r"[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}",
+        path,
+    )
+    if not matches:
+        return None
+    return matches[-1].replace("-", "")
+
+
+def run_id_extraction(argv: list[str]) -> None:
+    """`--id <주소>` 처리."""
+    index = argv.index("--id")
+    if index + 1 >= len(argv):
+        print('사용법: python check_env.py --id "여기에 Notion 주소 붙여넣기"')
+        print("주소에 특수문자가 있으므로 반드시 큰따옴표로 감싸세요.")
+        return
+
+    url = argv[index + 1]
+    database_id = extract_database_id(url)
+
+    if not database_id:
+        print("[X] 주소에서 ID를 찾지 못했습니다.")
+        print("    데이터베이스(표)를 '전체 페이지로 열기' 한 뒤의 주소여야 합니다.")
+        print("    주소 형태 예: https://www.notion.so/팀이름/제목-32자리ID?v=...")
+        return
+
+    print("\n[O] 찾았습니다. `.env`의 해당 줄을 아래처럼 바꾸세요.\n")
+    print(f"    NOTION_DATABASE_ID={database_id}\n")
+    if "?v=" in url:
+        print("    참고: 주소의 ?v= 뒤 값은 '보기 ID'라서 쓰지 않습니다. 위 값이 맞습니다.")
+
+
 def main() -> None:
+    if "--id" in sys.argv:
+        run_id_extraction(sys.argv)
+        return
+
     values = load_env_file()
     demo_ready = report_format(values)
 
