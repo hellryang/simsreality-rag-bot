@@ -94,7 +94,11 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
 
-    vectors = _load_model().encode(texts, normalize_embeddings=True)
+    # show_progress_bar를 끄지 않으면 호출할 때마다 "Batches: 100%|..." 막대가
+    # 찍혀 실제 출력이 묻힌다. 대량 적재 진행 상황은 build_db.py가 따로 찍는다.
+    vectors = _load_model().encode(
+        texts, normalize_embeddings=True, show_progress_bar=False
+    )
     return [[float(value) for value in vector] for vector in vectors]
 
 

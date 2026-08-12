@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 
+from app.core.config import setup_cli_logging
 from app.models.schemas import Answer, SearchHit
 from app.services.claude_service import answer_with_citations
 from app.services.vector_store import VectorStore
@@ -80,7 +81,7 @@ if __name__ == "__main__":
     import asyncio
     import sys
 
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    setup_cli_logging()
 
     args = sys.argv[1:]
     search_only = "--search" in args

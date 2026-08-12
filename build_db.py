@@ -17,7 +17,7 @@ import argparse
 import asyncio
 import logging
 
-from app.core.config import settings
+from app.core.config import settings, setup_cli_logging
 from app.models.schemas import Chunk, Document
 from app.services.embedder import chunk_documents
 from app.services.notion_service import collect_notion_page_tree
@@ -81,7 +81,7 @@ def main() -> None:
     parser.add_argument("--reset", action="store_true", help="기존 데이터를 비우고 새로")
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    setup_cli_logging()
 
     print("\n[1/3] Notion에서 문서를 수집합니다...")
     documents = asyncio.run(collect_all(limit=args.limit))

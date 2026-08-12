@@ -1,4 +1,6 @@
 """pydantic-settings 기반 환경변수 로드."""
+import logging
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,3 +29,17 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def setup_cli_logging(level: int = logging.INFO) -> None:
+    """터미널에서 스크립트를 직접 실행할 때 쓰는 로그 설정.
+
+    huggingface_hub과 httpx는 모델 파일을 확인하며 HTTP 요청 로그를 수십 줄씩
+    쏟아낸다. 그대로 두면 정작 보고 싶은 검색 결과가 묻힌다.
+    우리 코드(app.*)의 로그만 남기고 라이브러리 쪽은 오류만 보이게 낮춘다.
+    """
+    logging.basicConfig(level=level, format="%(levelname)s %(message)s")
+
+    for noisy in ("httpx", "httpcore", "huggingface_hub", "urllib3",
+                  "sentence_transformers", "transformers", "chromadb"):
+        logging.getLogger(noisy).setLevel(logging.ERROR)
