@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+pydantic-settings
+python-dotenv
+notion-client
+anthropic
+slack-bolt
+apscheduler
+chromadb
+sentence-transformers
+pytest
+pytest-asyncio
+httpx
