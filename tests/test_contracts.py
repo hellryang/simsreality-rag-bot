@@ -169,12 +169,12 @@ def test_system_prompt_states_citation_rules():
     assert "출처" in prompt
 
 
+@pytest.mark.xfail(strict=True, reason="이인아: answer_with_citations 구현 후 이 줄 삭제")
 async def test_empty_hits_skip_the_claude_call():
     """근거가 없는데 모델을 부르면 지어낸 답(환각)이 나오고 돈도 나간다.
 
     이 테스트는 API 키 없이 돌아야 한다. 네트워크를 타면 잘못 만든 것이다.
     """
-    pytest.importorskip("anthropic", reason="이인아: pip install anthropic 후 활성화")
     from app.services.claude_service import answer_with_citations
 
     answer = await answer_with_citations("배포 일정 알려줘", hits=[])
