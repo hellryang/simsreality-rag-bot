@@ -2,16 +2,18 @@
 
 > 원본은 Notion, 이 파일은 레포 안의 사본이다. 항목을 끝내면 `- [x]`로 바꿔 develop에 push한다.
 
-## 0. 지금 상태 (2026-08-12 기준)
+## 0. 지금 상태 (2026-08-12 3차 코칭 회의 중 갱신)
 
 | 항목 | 상태 |
 |---|---|
 | API 키 4종 (Notion / Claude / Slack / KakaoWork) | 발급 완료 |
 | 폴더 구조 스캐폴딩 | 완료 |
-| `app/services/notion_service.py` | 수집 코드 작성 완료 (실행 검증 필요) |
-| 나머지 `app/**/*.py` | **docstring만 있고 코드 없음** |
-| Git 저장소 | **아직 없음 (`git init` 전)** |
-| ChromaDB / 임베딩 / Claude 연동 | 미착수 |
+| Git 저장소 + 팀원 4명 초대 | **완료** (`hellryang/simsreality-rag-bot`) |
+| `app/models/schemas.py` (공용 계약) | **완료 — 테스트 8건 통과** |
+| `app/services/notion_service.py` | 수집 코드 완료 + 테스트 5건 통과 (실제 API 호출 검증은 남음) |
+| `tests/test_contracts.py` (이번 주 과제 명세) | **완료 — 10건이 일부러 실패 상태** |
+| GitHub Actions CI | 설정 완료 (PR마다 자동 테스트) |
+| `embedder` / `vector_store` / `claude_service` / `slack_service` | **docstring만 있음 → 이번 주 과제** |
 
 ---
 
@@ -98,17 +100,49 @@
 
 ## 4. 이번 주 남은 작업 (8/13 ~ 8/16)
 
-각자 `feature/기능명` 브랜치를 파고, 끝나면 develop으로 PR. 리뷰 1명 이상.
+**이번 주부터는 "알아서 만들기"가 아니라 "정해진 테스트 통과시키기"다.**
+`tests/test_contracts.py`에 각자 만들어야 할 함수의 이름·인자·반환값이 이미
+코드로 적혀 있다. 4명이 동시에 작업해도 주말 통합 때 안 맞는 사고를 막으려는 것이다.
 
-| 담당 | 파일 | 목표 |
+### 작업 절차 (전원 동일)
+
+```bash
+git checkout develop && git pull
+git checkout -b feature/기능명
+
+pytest tests/test_contracts.py -q        # 지금은 x(예상된 실패)로 뜬다
+# ... 담당 파일 구현 ...
+pytest -q                                # 통과할 때까지
+
+# 통과하면 그 테스트 위의 @pytest.mark.xfail(...) 한 줄을 지운다
+pytest -q                                # 이제 . (통과)로 바뀐다
+
+git add -A && git commit -m "feat: 청킹·임베딩 구현"
+git push -u origin feature/기능명         # → GitHub에서 develop으로 PR
+```
+
+`xfail` 한 줄을 지우는 것이 **"구현 끝났다"는 신고**다. 안 지우면 CI가 실패시킨다.
+
+### 담당
+
+| 담당 | 파일 | 통과시켜야 할 테스트 |
 |---|---|---|
-| 임혜량 | `app/services/notion_service.py` | 수집 검증 + 페이지 전체 수집 확인 |
-| 마준서 | `app/services/embedder.py`, `vector_store.py` | 청킹 300/50 + ChromaDB 적재·검색 동작 |
-| 이인아 | `app/services/claude_service.py` | Claude 호출 + 출처 인용 시스템 프롬프트 |
-| 송준호 | `app/services/slack_service.py`, `tests/` | Slack 메시지 수집 + 첫 테스트 작성 |
+| 임혜량 | `notion_service.py` | (테스트 통과 완료) 실제 Notion API로 전체 수집 검증 + `build_db.py` |
+| 마준서 | `embedder.py`, `vector_store.py` | `chunk_document` 3건, `embed_texts` 1건, `VectorStore` 2건 |
+| 이인아 | `claude_service.py` | `build_system_prompt` 1건, `answer_with_citations` 1건 |
+| 송준호 | `slack_service.py` | `scrub_pii` 3건 + Slack 수집 함수 |
+
+> **테스트를 고쳐서 통과시키지 않는다.** 계약을 바꿔야 한다고 판단되면
+> 먼저 팀 채널에 올려 합의한 뒤, `test_contracts.py`를 고치는 PR을 따로 낸다.
 
 **주말 전 통합 목표**: 루트의 `build_db.py`로 Notion 문서를 ChromaDB에 넣고,
 `qa_pipeline.py`가 질문 하나에 출처 붙은 답변을 돌려주는 것.
+
+### 공용 파일 규칙
+
+`app/models/schemas.py`는 4명 전원이 import한다. 여기를 고치면 남의 코드가
+조용히 깨진다. 고쳐야 하면 **PR + 팀 채널 공유가 필수**다.
+`vector_store.py`와 `qa_pipeline.py`도 같은 취급.
 
 ---
 

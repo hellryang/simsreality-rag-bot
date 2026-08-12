@@ -1,0 +1,32 @@
+# develop으로 가는 모든 PR에서 테스트를 자동으로 돌린다.
+# 목적: "내 컴퓨터에서는 됐는데요"를 없애고, 남의 코드를 깬 PR을 병합 전에 잡는 것.
+name: CI
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          # pip 캐시가 없으면 torch 내려받느라 매번 10분 넘게 걸린다.
+          cache: pip
+
+      - name: 패키지 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 테스트
+        # API 키는 넣지 않는다. tests/conftest.py가 더미 값을 채우므로
+        # 외부 API를 부르지 않는 테스트만 돌아간다.
+        run: pytest -q -rxs
