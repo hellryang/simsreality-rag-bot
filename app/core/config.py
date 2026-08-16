@@ -40,6 +40,9 @@ def setup_cli_logging(level: int = logging.INFO) -> None:
     """
     logging.basicConfig(level=level, format="%(levelname)s %(message)s")
 
+    # anthropic은 재시도할 때마다 INFO 로그를 남긴다. 대화형 모드에서
+    # 답변 문장 사이에 끼어들어 읽기 어려워지므로 함께 낮춘다.
     for noisy in ("httpx", "httpcore", "huggingface_hub", "urllib3",
-                  "sentence_transformers", "transformers", "chromadb"):
+                  "sentence_transformers", "transformers", "chromadb",
+                  "anthropic"):
         logging.getLogger(noisy).setLevel(logging.ERROR)

@@ -125,6 +125,7 @@ git push -u origin feature/notion-collect
 python build_db.py                                        # Notion 수집 → 벡터 DB 적재
 python -m app.services.qa_pipeline --search "질문"        # 의미 검색만 (Claude 키 불필요)
 python -m app.services.qa_pipeline "질문"                 # 출처 붙은 답변
+python -m app.services.qa_pipeline --chat                 # 대화형 (모델 1회 로딩)
 uvicorn app.main:app --reload --port 8000                 # 개발 서버
 pytest -q                                                 # 테스트 전체
 ```
