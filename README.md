@@ -139,6 +139,7 @@ pytest -q                                                 # 테스트 전체
 
 | 문서 | 내용 |
 |---|---|
+| [SETUP.md](./SETUP.md) | **팀원 설치 안내** — 처음 받았을 때 따라 하는 순서 |
 | [CLAUDE.md](./CLAUDE.md) | 확정 아키텍처, 기술 스택, 코딩 규칙 (변경 금지 항목 포함) |
 | [TEAM_CHECKLIST.md](./TEAM_CHECKLIST.md) | 주차별 실행 체크리스트와 역할 분담 |
 | [RUNBOOK.md](./RUNBOOK.md) | 터미널 명령어 순서, 결과 예시, 오류 대처법 |
