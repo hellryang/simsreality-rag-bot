@@ -11,3 +11,9 @@ sentence-transformers
 pytest
 pytest-asyncio
 httpx
+
+# KakaoWork 파일 업로드 (app/services/kakao_upload.py)
+python-multipart
+pypdf
+python-docx
+openpyxl

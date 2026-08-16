@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     slack_app_token: str | None = None
 
     kakaowork_app_key: str
+    # 콜백/업로드 링크 보호용 공유 비밀. 비우면 검증하지 않는다.
+    kakaowork_callback_token: str | None = None
+    # 사용자 브라우저가 접속할 공개 주소(터널 또는 배포 주소).
+    kakaowork_public_url: str = "http://localhost:8000"
 
     chroma_persist_dir: str = "./chroma_data"
 
