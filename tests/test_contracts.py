@@ -69,6 +69,33 @@ def test_adjacent_chunks_overlap_by_50():
     assert chunks[0].text[-50:] == chunks[1].text[:50]
 
 
+def test_table_row_is_never_split_across_chunks():
+    """표의 한 행은 통째로 한 조각 안에 들어가야 한다. (2026-08-16 팀 합의로 추가)
+
+    글자 수만 세서 자르면 행이 두 조각으로 갈라져
+    "년 | 연락처: ... | 현재 프로젝트 담당: Slack" 같은 반토막이 남는다.
+    누구 이야기인지 알 수 없으니 검색에 걸려도 쓸모가 없고, Claude에 넘어가면
+    근거를 잘못 읽는다. 실제로 "카카오워크 담당이 누구야"에 한 명이 누락됐다.
+    """
+    from app.services.embedder import chunk_document
+
+    rows = [
+        f"이름: 팀원{i} | 학년: 2학년 | 학교: 전남대 | 학과: 인공지능학부 | "
+        f"주력 스킬: Back-end | 현재 프로젝트 담당: KakaoWork"
+        for i in range(8)
+    ]
+    document = Document(text="\n".join(rows), source="notion", title="팀 구성")
+
+    chunks = chunk_document(document)
+
+    assert len(chunks) > 1, "이 정도 길이면 여러 조각으로 갈려야 한다"
+    assert all(len(c.text) <= 300 for c in chunks)
+
+    # 모든 행이 어느 한 조각 안에 온전히 들어 있어야 한다.
+    for row in rows:
+        assert any(row in c.text for c in chunks), f"행이 쪼개졌다: {row[:30]}..."
+
+
 def test_short_document_stays_one_chunk():
     """300자가 안 되는 짧은 메시지를 억지로 쪼개면 안 된다."""
     from app.services.embedder import chunk_document
