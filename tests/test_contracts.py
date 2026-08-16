@@ -212,7 +212,6 @@ async def test_empty_hits_skip_the_claude_call():
 # 송준호 — app/services/slack_service.py
 # ====================================================================
 
-@pytest.mark.xfail(strict=True, reason="송준호: scrub_pii 구현 후 이 줄 삭제")
 def test_phone_number_is_masked():
     """메신저 로그에는 개인정보가 섞인다. 벡터 DB에 그대로 들어가면 안 된다.
 
@@ -226,7 +225,6 @@ def test_phone_number_is_masked():
     assert "연락주세요" in scrubbed
 
 
-@pytest.mark.xfail(strict=True, reason="송준호: scrub_pii 구현 후 이 줄 삭제")
 def test_email_address_is_masked():
     """멘토 이메일이 답변에 그대로 인용되는 사고를 막는다."""
     from app.services.slack_service import scrub_pii
@@ -236,7 +234,6 @@ def test_email_address_is_masked():
     assert "hoo@simsreality.com" not in scrubbed
 
 
-@pytest.mark.xfail(strict=True, reason="송준호: scrub_pii 구현 후 이 줄 삭제")
 def test_ordinary_sentence_is_untouched():
     """과하게 지우면 검색할 내용 자체가 사라진다."""
     from app.services.slack_service import scrub_pii

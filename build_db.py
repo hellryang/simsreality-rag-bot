@@ -43,7 +43,12 @@ async def collect_all(limit: int | None = None) -> list[Document]:
             '    python check_env.py --id "<Notion 주소>" 로 ID를 뽑아 채우세요.'
         )
 
-    raw = await collect_notion_page_tree(settings.notion_root_page_id, limit=limit)
+    # include_root=True: 최상단 페이지 본문에 팀 구성표와 회의 일정이 들어 있어서
+    # 이걸 빼면 "누가 무슨 담당이야" 같은 질문에 답할 근거가 사라진다.
+    # 그 표에 섞인 연락처는 notion_service의 scrub_pii가 마스킹한다.
+    raw = await collect_notion_page_tree(
+        settings.notion_root_page_id, limit=limit, include_root=True
+    )
 
     documents: list[Document] = []
     for item in raw:
