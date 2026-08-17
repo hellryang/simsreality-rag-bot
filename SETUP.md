@@ -13,8 +13,13 @@
 
 | 받을 것 | 용도 |
 |---|---|
-| API 키 4종 (Notion / Claude / Slack / KakaoWork) | `.env` 파일에 채웁니다 |
+| 키 3개 (`NOTION_API_KEY`, `NOTION_ROOT_PAGE_ID`, `ANTHROPIC_API_KEY`) | `.env` 파일에 채웁니다 |
 | 저장소 접근 권한 | private 저장소라 초대를 수락해야 clone됩니다 |
+
+**실제로 채울 값은 이 3개뿐입니다.** `SLACK_*`와 `KAKAOWORK_*`는
+`.env.example`의 자리표시자 그대로 두면 됩니다. 아직 그 기능을 안 쓰는데도
+값이 비면 프로그램이 안 뜨기 때문에 넣어둔 것뿐입니다.
+**Slack·카카오워크 키를 기다리지 말고 지금 시작하세요.**
 
 키는 **팀 공용 계정 1개**를 씁니다. 개인 키를 새로 발급받지 마세요.
 개인 Notion 키를 쓰면 우리 페이지에 접근 권한이 없어서 `403`이 납니다.
@@ -28,29 +33,22 @@
 git clone https://github.com/hellryang/simsreality-rag-bot.git
 cd simsreality-rag-bot
 
-# 2) 최신 작업 브랜치로 이동   ← 지금은 이 단계가 꼭 필요합니다
-git checkout feature/notion-table-read
-
-# 3) 가상환경 만들고 켜기
+# 2) 가상환경 만들고 켜기
 python -m venv .venv
 .venv\Scripts\activate
 
-# 4) 패키지 설치 (5~15분 걸립니다. 정상입니다)
+# 3) 패키지 설치 (5~15분 걸립니다. 정상입니다)
 pip install -r requirements.txt
 
-# 5) 환경변수 파일 만들기
+# 4) 환경변수 파일 만들기
 copy .env.example .env
 notepad .env          # 팀장이 준 키를 채우고 저장
 
-# 6) 벡터 DB 만들기 (첫 실행은 모델 500MB 다운로드로 오래 걸립니다)
+# 5) 벡터 DB 만들기 (첫 실행은 모델 500MB 다운로드로 오래 걸립니다)
 python build_db.py
 ```
 
-> **2단계를 왜 하나요?**
-> 노션 표 읽기·개인정보 마스킹·대화형 모드는 아직 `feature/notion-table-read`
-> 브랜치에만 있습니다. `develop`에는 없습니다. PR이 `develop`에 병합되면
-> 2단계 없이 `git checkout develop && git pull` 만 하면 됩니다.
-> 팀장이 병합 완료를 알리면 그때부터는 그렇게 하세요.
+기본 브랜치가 `develop`이라 clone하면 바로 최신 통합 코드를 받습니다.
 
 ---
 
@@ -60,11 +58,10 @@ python build_db.py
 cd <프로젝트 폴더>
 .venv\Scripts\activate
 
-git fetch origin
-git checkout feature/notion-table-read
+git checkout develop
 git pull
 
-pip install -r requirements.txt     # 새 패키지가 있을 수 있습니다
+pip install -r requirements.txt     # 버전이 고정돼 있으니 그대로 맞춰집니다
 python build_db.py --reset          # 수집 방식이 바뀌었으므로 --reset 필요
 ```
 
