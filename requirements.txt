@@ -1,13 +1,37 @@
-fastapi
-uvicorn[standard]
-pydantic-settings
-python-dotenv
-notion-client
-anthropic
-slack-bolt
-apscheduler
-chromadb
-sentence-transformers
-pytest
-pytest-asyncio
-httpx
+# Pinned on 2026-08-17. Python 3.11.
+#
+# Why pinned: without versions, each person installs whatever is latest that
+# day and the same code behaves differently per machine.
+# Real case: notion-client 3.x removed databases.query (now data_sources.query).
+#
+# To upgrade: bump one line at a time, run pytest, then open a PR.
+#
+# NOTE: keep this file ASCII-only. pip reads it with the system locale
+# encoding (cp949 on Korean Windows), so non-ASCII comments break install.
+# Korean explanations live in SETUP.md instead.
+
+# --- web framework ---
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+
+# --- settings ---
+pydantic-settings==2.15.0
+python-dotenv==1.2.2
+
+# --- external service SDKs ---
+notion-client==3.1.0
+anthropic==0.121.0
+slack-bolt==1.30.0
+
+# --- scheduler ---
+apscheduler==3.11.3
+
+# --- vector db / embedding ---
+# sentence-transformers pulls in torch; install takes 5-15 minutes. This is normal.
+chromadb==1.5.9
+sentence-transformers==5.7.0
+
+# --- tests ---
+pytest==9.1.1
+pytest-asyncio==1.4.0
+httpx==0.28.1
