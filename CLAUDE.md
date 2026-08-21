@@ -2,7 +2,7 @@
 
 > 이 파일은 Claude Code가 저장소 루트에서 자동으로 읽는 프로젝트 지침이다.
 > ㈜심스리얼리티 「AI 기반 업무 협업 플랫폼 연동 및 자동화 서비스 개발」 백엔드 저장소 루트에 둔다.
-> 최종 갱신: 2026-08-11
+> 최종 갱신: 2026-08-17
 
 ---
 
@@ -28,7 +28,7 @@
 | 수행기간 | 2026.07.27 ~ 2026.09.18 (8주, 멘토링 8회차) |
 | 팀 구성 | 임혜량(팀장·KakaoWork), 마준서(KakaoWork), 이인아(Slack), 송준호(Slack) |
 | 코칭 회차 | 3차(08.12) / 5차(08.26) / 7차(09.09) |
-| 오프라인 대면회의 | 담양 (확정) |
+| 오프라인 대면회의 | 1차 2026-08-22 (확정) / 2차 추후 협의 |
 | 최종 산출물 | 소스코드 + 배포 URL(Railway/Render) + 결과보고서 + 발표자료 |
 
 **성공 기준**: 세 소스(Notion·Slack·KakaoWork)에서 데이터를 수집해 의미 기반 검색을 수행하고, **출처(citation)가 붙은 답변**을 메신저 봇으로 돌려주는 챗봇이 동작할 것. 단, 학생 팀이 직접 따라가고 유지보수할 수 있는 수준을 유지할 것.
@@ -107,13 +107,64 @@ project-root/
 │   └── models/
 │       └── schemas.py            # Pydantic 스키마
 ├── tests/
+├── build_db.py                   # 수집 → 청킹 → 임베딩 → 벡터 DB 적재 (엔트리)
+├── check_env.py                  # .env 점검, Notion 접속 확인, 주소→ID 추출
 ├── .env.example                  # 키 이름만 (값 X)
 ├── .gitignore
-├── requirements.txt
-└── README.md
+├── requirements.txt              # 버전 고정. ASCII 전용 (아래 12-1 참조)
+├── README.md
+├── SETUP.md                      # 팀원 설치 안내
+├── RUNBOOK.md                    # 명령어별 상세 설명과 출력 예시
+└── TEAM_CHECKLIST.md             # 주차별 체크리스트, 역할 분담
 ```
 
 `app/core`, `app/api`, `app/services`, `app/scheduler`, `app/models` 5분류를 벗어나는 새 최상위 디렉터리를 임의로 만들지 않는다.
+
+---
+
+## 5-1. 데이터 흐름과 구현 상태 (2026-08-17)
+
+여러 파일을 읽어야 파악되는 부분이라 여기에 요약해 둔다.
+
+```
+Notion 페이지 트리
+  │  notion_service.collect_notion_page_tree(root_id, include_root=True)
+  │    · child_page를 재귀로 따라가며 페이지마다 Document 1건
+  │    · 본문 블록은 _collect_block_lines가 3단계까지 재귀
+  │      (토글·다단·표가 중첩돼 있어 1단계로는 누락된다)
+  │    · table 블록은 자식 table_row를 다시 조회해 행 단위 문장으로 변환
+  │    · 완성된 text에 core.security.scrub_pii 적용 (연락처·이메일 마스킹)
+  ▼
+build_db.collect_all() → Document 목록
+  │  embedder.chunk_documents()   줄 단위 청킹, 300자 이내
+  │  embedder.embed_texts()       ko-sroberta, normalize=True, lru_cache
+  ▼
+vector_store.VectorStore.add()   ChromaDB upsert (chunk_id 기준, 중복 방지)
+  ▼
+qa_pipeline.search_documents()   → list[SearchHit] (여기까지 Claude 키 불필요)
+  ▼
+claude_service.answer_with_citations()  → Answer(text, citations)
+```
+
+**구현 상태**
+
+| 영역 | 상태 |
+|---|---|
+| Notion 수집 (하위 페이지·표·토글·중첩) | 완료 |
+| 청킹·임베딩·벡터 DB·인용 답변 | 완료 |
+| 개인정보 마스킹 (`scrub_pii`) | 완료 |
+| CLI (`--search`, `--chat`) | 완료 |
+| Slack 수집·발송 | **미착수** (`slack_service.py`는 재수출만) |
+| KakaoWork 수집·발송 | **미착수** (`kakao_service.py` 1줄) |
+| 웹훅 엔드포인트·서명 검증 | **미착수** (라우터 껍데기만) |
+| APScheduler 주기 수집 | **미착수** |
+| 배포 (Railway/Render) | **미착수** — 설정 파일 없음 |
+
+**KakaoWork 봇은 배포가 선행돼야 한다.** 관리자센터의 봇 설정에 `Callback URL`
+칸이 있다. 카카오워크 서버가 우리 서버를 호출하는 구조라 공개 HTTPS 주소가
+없으면 봇이 성립하지 않는다. 일정표는 배포를 7주차에 뒀지만 봇보다 앞서야 한다.
+(2026-08-17 관리자센터 화면으로 확인. 봇 `sims_bot`은 생성돼 있으나
+대화 기능과 Callback URL이 모두 '미사용' 상태.)
 
 ---
 
@@ -131,9 +182,19 @@ project-root/
 ## 7. API별 필수 규칙
 
 ### Notion
-- 환경변수: `NOTION_API_KEY`(`ntn_`/`secret_`), `NOTION_DATABASE_ID`
+- 환경변수: `NOTION_API_KEY`(`ntn_`/`secret_`), `NOTION_ROOT_PAGE_ID` **또는** `NOTION_DATABASE_ID`
+  - 우리 워크스페이스는 '2026 일경험 프로젝트' 페이지 아래 하위 페이지 구조라 `ROOT_PAGE_ID`를 쓴다.
 - 코드 제안 시 "대상 페이지/DB가 Integration과 공유되었는가"를 항상 확인시킨다. 미공유 시 `403`.
 - Rate Limit 평균 초당 약 3회 → 대량 호출에는 백오프 필수.
+- **설치된 `notion-client` 3.1.0에는 `databases.query`가 없다.** Notion API가 바뀌면서
+  데이터 소스 단위(`client.data_sources.query`)로 대체됐다.
+  `collect_notion_documents()`가 아직 옛 메서드를 부르고 있어 실행하면 `AttributeError`가 난다.
+  현재 미사용 경로라 드러나지 않을 뿐이다. 인라인 DB(`child_database`) 읽기를 만들 때 함께 고칠 것.
+- **표는 `has_column_header`가 켜져 있어야** 각 행에 컬럼명이 붙는다. 꺼져 있으면 값만 들어가서
+  "담당이 누구야" 같은 질문에 모델이 컬럼의 의미를 알 수 없다. 코드로 첫 행을 머리글이라고
+  추측하지 않는다 — 머리글이 없는 표에서 데이터 한 줄이 사라진다.
+- 쓰기(페이지·표 생성)는 가능한 것으로 확인됐다(2026-08-16). 단 Integration Capabilities에
+  삽입 권한이 켜져 있어야 한다.
 
 ### Claude
 - 환경변수: `ANTHROPIC_API_KEY`(`sk-ant-`)
@@ -202,12 +263,29 @@ pytest tests/test_qa_pipeline.py::test_answer_includes_citation -q
 
 # 배포용 시작 명령 (Railway/Render)
 uvicorn app.main:app --host 0.0.0.0 --port $PORT
-
-# Git 초기화 (아직 저장소가 로컬 폴더 상태라면 최초 1회)
-git init && git add -A && git commit -m "chore: initial scaffold"
-git remote add origin <팀 원격 저장소 URL>
-git push -u origin main
 ```
+
+### 이 프로젝트에서 실제로 매일 쓰는 명령
+
+```powershell
+.venv\Scriptsctivate                                   # 터미널 열 때마다
+
+python check_env.py                                       # .env 점검 (키 값은 출력 안 됨)
+python check_env.py --notion                              # Notion 실제 접속까지 확인
+python check_env.py --id "<Notion 주소>"                   # 주소에서 페이지 ID 추출
+
+python build_db.py                                        # 수집 → 적재
+python build_db.py --reset                                # 비우고 새로 (수집 코드를 고쳤으면 필수)
+python build_db.py --limit 3                              # 3건만 빠르게
+
+python -m app.services.qa_pipeline --search "질문"         # 검색만. Claude 미호출 = 무료
+python -m app.services.qa_pipeline "질문"                  # 출처 붙은 답변
+python -m app.services.qa_pipeline --chat                  # 대화형. 모델을 1회만 로딩
+                                                           #   대화형 안에서 ?질문 = 검색만
+```
+
+`chroma_data/`와 `.env`는 저장소에 없다. 코드를 새로 받으면 `build_db.py`를 직접
+한 번 돌려야 한다. 안 돌리면 `찾은 조각: 0건`만 나온다 — 고장이 아니다.
 
 ---
 
@@ -216,7 +294,16 @@ git push -u origin main
 - 브랜치: `main`(배포) / `develop`(통합) / `feature/기능명`
 - 커밋 접두사: `feat:` `fix:` `docs:` `refactor:` `test:`
 - PR은 최소 1인 리뷰 후 `develop`에 병합. **코칭 회차(3차·5차·7차) 전날까지 최신 코드를 push**한다.
-- KakaoWork팀(임혜량·마준서)과 Slack팀(이인아·송준호)이 각자 어댑터를 맡되, `qa_pipeline.py`와 `vector_store.py`는 공용이므로 변경 시 반드시 PR로 공유한다.
+- 원격 저장소는 `hellryang/simsreality-rag-bot`(private), **기본 브랜치는 `develop`**이다.
+- KakaoWork팀(임혜량·마준서)과 Slack팀(이인아·송준호)이 각자 어댑터를 맡는다.
+- **공용 파일** — 네 명이 전부 import한다. 고치면 남의 코드가 조용히 깨지므로 반드시 PR로 공유한다.
+  `app/models/schemas.py`, `app/services/vector_store.py`, `app/services/qa_pipeline.py`,
+  `app/services/embedder.py`, `app/core/security.py`
+- **`tests/test_contracts.py`는 과제 명세서다.** 통과시키려고 테스트를 고치지 않는다.
+  계약을 바꿔야 하면 팀 채널 합의 후 별도 PR로 낸다. 구현이 끝났다는 신고는
+  해당 테스트 위의 `@pytest.mark.xfail` 한 줄을 지우는 것으로 한다.
+- CI(`.github/workflows/ci.yml`)가 `develop`으로 가는 모든 PR에서 `pytest`를 돌린다.
+  `tests/conftest.py`가 더미 키를 채우므로 CI는 API 키 없이 통과한다.
 - 프로젝트 일정·문서의 원본(source of truth)은 Notion 워크스페이스다.
 
 ---
@@ -243,6 +330,26 @@ git push -u origin main
 
 ---
 
+## 12-1. 이미 겪은 함정 (추측 아님, 전부 실제로 터진 것)
+
+| 함정 | 내용 |
+|---|---|
+| `requirements.txt`에 한글 주석 | pip가 시스템 로캘(한글 윈도우는 cp949)로 읽어서 `UnicodeDecodeError`로 설치 자체가 실패한다. **이 파일은 ASCII 전용으로 유지한다.** 한글 설명은 SETUP.md에 둔다 |
+| 최상단 페이지에 팀원 연락처 | `include_root=True`로 켜기 전에 `scrub_pii`가 반드시 적용돼야 한다. 한 번 임베딩되면 특정 정보만 골라 지우기 어렵다 |
+| `scrub_pii` 위치 | 구현은 `app/core/security.py`에 있고 `slack_service.py`가 재수출한다. 계약 테스트가 `app.services.slack_service` 경로로 import하기 때문이다 |
+| 표 행이 조각 경계에서 잘림 | `chunk_document`는 **줄 경계에서만** 끊는다. 300자를 넘는 긴 한 줄만 글자 수로 자르고 그때만 50자를 겹친다. 이 규칙을 깨면 "년 \| 연락처: ..." 같은 반토막이 생겨 근거로 못 쓴다 |
+| 한 문장에 주제 두 개 | 검색 벡터가 흐려져 필요한 조각이 `top_k`(5) 밖으로 밀린다. 실제로 "담당은 누구고 대면회의는 언제야"에서 한 명이 누락됐다. **질문은 한 번에 한 주제씩** |
+| 키워드 한 단어 질문 | 모델이 "질문이 성립 안 함"으로 보고 거절 문구를 고른다. 시스템 프롬프트에 "한두 단어 키워드도 거절하지 말 것"을 명시해 뒀다. 지우지 말 것 |
+| 거절 판정 | 모델이 거절 문구 뒤에 설명을 덧붙이므로 `==`가 아니라 `startswith`로 판정한다. `==`로 되돌리면 "못 찾았다"면서 출처가 붙는 모순이 생긴다 |
+| CLI 로그 오염 | `setup_cli_logging()`이 `httpx`·`chromadb`·`anthropic` 등의 로거를 ERROR로 낮춘다. 안 그러면 재시도·다운로드 로그가 답변 사이에 끼어든다 |
+| 짧은 문장 임베딩 | `ko-sroberta-multitask`는 짧은 입력과 영어 혼용에 약하다(`슬랙` 0.297 vs `Slack을 맡은 팀원이 누구인가요` 0.534). 검색 품질을 논할 때 이 특성을 먼저 고려한다 |
+
+**유사도 읽는 법**: 0.5 이상 관련 있음 / 0.4~0.5 애매 / 0.4 미만 사실상 무관.
+벡터 검색은 "관련 없음"을 모르고 무조건 가장 가까운 것 `top_k`개를 준다.
+전부 0.4 미만이면 고장이 아니라 그 내용이 문서에 없다는 뜻이다.
+
+---
+
 ## 13. 작업 완료 전 자가 점검
 
 - [ ] 모든 키가 환경변수로 처리되었는가
@@ -256,6 +363,16 @@ git push -u origin main
 ---
 
 ## 14. 참고 링크
+
+### 저장소 안 문서 (먼저 볼 것)
+
+| 문서 | 언제 보나 |
+|---|---|
+| `SETUP.md` | 팀원이 코드를 처음 받아 돌릴 때 |
+| `RUNBOOK.md` | 명령어별 상세 설명, 출력 예시, 오류 대처 |
+| `TEAM_CHECKLIST.md` | 주차별 목표, 역할 분담, 전체 일정 |
+
+### 외부 문서
 
 - Claude API 문서: https://docs.claude.com/en/api/overview
 - Claude 모델 목록: https://docs.claude.com/en/docs/about-claude/models
