@@ -73,3 +73,59 @@ def test_search_returns_empty_list_when_store_is_empty(tmp_path):
     from app.services.qa_pipeline import search_documents
 
     assert search_documents("아무 질문", persist_dir=str(tmp_path)) == []
+
+
+# --- 근거 없음 선언 뒤에 설명이 붙는 경우 ----------------------------
+
+
+def _citation():
+    from app.models.schemas import Citation
+
+    return Citation(number=1, title="회의 내용", url="https://example.com", source="notion")
+
+
+def test_bare_no_context_answer_drops_its_citations():
+    from app.models.schemas import NO_CONTEXT_ANSWER
+    from app.services.claude_service import _finalize
+
+    answer = _finalize(NO_CONTEXT_ANSWER, [_citation()])
+
+    assert answer.text == NO_CONTEXT_ANSWER
+    assert answer.citations == []
+
+
+def test_explanation_after_the_no_context_line_keeps_citations():
+    """모순되는 첫 문장만 떼고 설명과 출처는 남긴다.
+
+    모델이 규칙 3을 지키다 말고 설명을 덧붙이면, 그대로 두었을 때
+    "찾지 못했습니다"라고 하면서 출처를 다는 모순이 생긴다.
+    """
+    from app.models.schemas import NO_CONTEXT_ANSWER
+    from app.services.claude_service import _finalize
+
+    citations = [_citation()]
+    answer = _finalize(f"{NO_CONTEXT_ANSWER}\n\n[1]에는 제목만 있습니다.", citations)
+
+    assert not answer.text.startswith(NO_CONTEXT_ANSWER)
+    assert answer.text == "[1]에는 제목만 있습니다."
+    assert answer.citations == citations
+
+
+def test_no_context_line_with_only_whitespace_after_it_is_still_no_context():
+    from app.models.schemas import NO_CONTEXT_ANSWER
+    from app.services.claude_service import _finalize
+
+    answer = _finalize(f"{NO_CONTEXT_ANSWER}\n\n  ", [_citation()])
+
+    assert answer.text == NO_CONTEXT_ANSWER
+    assert answer.citations == []
+
+
+def test_a_normal_answer_is_left_alone():
+    from app.services.claude_service import _finalize
+
+    citations = [_citation()]
+    answer = _finalize("3주차 회의는 8월 12일이었습니다. [1]", citations)
+
+    assert answer.text == "3주차 회의는 8월 12일이었습니다. [1]"
+    assert answer.citations == citations

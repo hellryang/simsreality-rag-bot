@@ -244,3 +244,75 @@ def test_ordinary_sentence_is_untouched():
     original = "내일 3시에 회의실에서 봅시다"
 
     assert scrub_pii(original) == original
+
+
+# ====================================================================
+# 문서 목록 조회 / 삭제
+# ====================================================================
+
+
+def _doc(title: str, source: str = "kakaowork", submitted_by: str = "") -> Document:
+    return Document(
+        text=LONG_TEXT, source=source, title=title, submitted_by=submitted_by
+    )
+
+
+def _filled_store(tmp_path, *documents: Document):
+    """문서를 조각내어 넣은 저장소. import는 이 파일의 관례대로 함수 안에서."""
+    from app.services.embedder import chunk_documents
+    from app.services.vector_store import VectorStore
+
+    store = VectorStore(persist_dir=str(tmp_path))
+    store.add(chunk_documents(list(documents)))
+    return store
+
+
+def test_list_documents_groups_chunks_by_document(tmp_path):
+    store = _filled_store(tmp_path, _doc("첫 문서"), _doc("둘째 문서"))
+
+    documents = store.list_documents()
+
+    assert {d.title for d in documents} == {"첫 문서", "둘째 문서"}
+    assert all(d.chunk_count >= 1 for d in documents)
+
+
+def test_list_documents_filters_by_source(tmp_path):
+    store = _filled_store(tmp_path, _doc("카카오"), _doc("노션", source="notion"))
+
+    assert [d.title for d in store.list_documents("kakaowork")] == ["카카오"]
+    assert [d.title for d in store.list_documents("notion")] == ["노션"]
+
+
+def test_list_documents_keeps_the_submitter(tmp_path):
+    """누가 올렸는지 남지 않으면 나중에 문제를 추적할 수 없다."""
+    store = _filled_store(tmp_path, _doc("제출한 대화", submitted_by="12050898"))
+
+    assert store.list_documents()[0].submitted_by == "12050898"
+
+
+def test_delete_document_removes_every_chunk(tmp_path):
+    """조각이 하나라도 남으면 검색에 계속 걸리므로 전부 지워야 한다."""
+    store = _filled_store(tmp_path, _doc("지울 문서"), _doc("남길 문서"))
+    before = store.count()
+
+    removed = store.delete_document("지울 문서")
+
+    assert removed > 0
+    assert store.count() == before - removed
+    assert [d.title for d in store.list_documents()] == ["남길 문서"]
+
+
+def test_delete_document_is_a_no_op_for_an_unknown_title(tmp_path):
+    store = _filled_store(tmp_path, _doc("있는 문서"))
+
+    assert store.delete_document("없는 문서") == 0
+    assert store.count() > 0
+
+
+def test_delete_source_leaves_other_sources_alone(tmp_path):
+    """카카오워크만 비우고 Notion은 지키는 것이 이 메서드의 존재 이유다."""
+    store = _filled_store(tmp_path, _doc("카카오"), _doc("노션", source="notion"))
+
+    store.delete_source("kakaowork")
+
+    assert [d.title for d in store.list_documents()] == ["노션"]

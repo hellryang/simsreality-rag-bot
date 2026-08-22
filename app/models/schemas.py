@@ -40,6 +40,10 @@ class Document(BaseModel):
     url: str = ""
     title: str = ""
     created_at: str = ""
+    # 사용자가 봇에 직접 제출한 문서에만 채워진다(카카오워크). Notion·Slack은
+    # 원본에 작성자가 남지만 이쪽은 우리가 기록하지 않으면 추적할 길이 없다.
+    # 잘못된 내용을 지울 때 누가 올렸는지 알아야 한다.
+    submitted_by: str = ""
 
     _check_text = field_validator("text")(_require_non_empty)
 
@@ -57,6 +61,7 @@ class Chunk(BaseModel):
     title: str = ""
     created_at: str = ""
     chunk_index: int = 0
+    submitted_by: str = ""
 
     @classmethod
     def from_document(cls, document: Document, text: str, index: int) -> "Chunk":
@@ -75,6 +80,7 @@ class Chunk(BaseModel):
             title=document.title,
             created_at=document.created_at,
             chunk_index=index,
+            submitted_by=document.submitted_by,
         )
 
     def metadata(self) -> dict[str, str | int]:
@@ -89,7 +95,28 @@ class Chunk(BaseModel):
             "title": self.title,
             "created_at": self.created_at,
             "chunk_index": self.chunk_index,
+            "submitted_by": self.submitted_by,
         }
+
+
+class StoredDocument(BaseModel):
+    """벡터 DB에 들어 있는 문서 한 건의 요약.
+
+    저장 단위는 조각이지만 사람이 관리하는 단위는 문서다. 조각들을 제목으로
+    묶어서 "무엇이 들어 있는지" 보여주고, 지울 때 쓸 chunk_id를 함께 들고
+    있는다. 검색(SearchHit)과 달리 질문도 임베딩 계산도 필요 없다.
+    """
+
+    source: SourceName
+    title: str
+    url: str = ""
+    created_at: str = ""
+    submitted_by: str = ""
+    chunk_ids: list[str] = Field(default_factory=list)
+
+    @property
+    def chunk_count(self) -> int:
+        return len(self.chunk_ids)
 
 
 def _build_chunk_id(document: Document, index: int) -> str:

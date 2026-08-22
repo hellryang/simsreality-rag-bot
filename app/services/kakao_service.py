@@ -50,6 +50,13 @@ ACTION_OPEN_BROWSER = "open_system_browser"
 FIELD_QUESTION = "question"
 FIELD_CHAT_LOG = "chat_log"
 
+# 버튼 식별자. 버튼의 action.value로 나갔다가 request_modal 페이로드의
+# value로 되돌아온다. 세 군데(버튼 생성·모달 응답·라우팅)에서 같은 값을
+# 써야 하므로 상수로 묶는다.
+BUTTON_ASK = "ask_question"
+BUTTON_CHAT_LOG = "submit_chat_log"
+BUTTON_UPLOAD = "upload_file"
+
 
 class KakaoWorkError(RuntimeError):
     """API가 success: false를 돌려줬을 때."""
@@ -206,23 +213,44 @@ async def reply_to_user(user_id: str, text: str) -> None:
 
 
 def _text_block(content: str) -> dict[str, Any]:
+    """말풍선용 텍스트. 모달 안에서는 쓸 수 없다(_label_block을 쓴다)."""
     return {"type": "text", "text": content, "markdown": True}
+
+
+def _label_block(content: str) -> dict[str, Any]:
+    """모달용 설명 문구. 최대 200자.
+
+    모달에는 말풍선용 블록(text/header/divider/action…)을 넣을 수 없다.
+    Label/Input/Select 세 가지만 허용된다. text 블록을 넣으면 모달을
+    불러오는 단계에서 실패한다.
+
+    사양: https://docs.kakaoi.ai/kakao_work/blockkit/labelblock/
+    """
+    return {"type": "label", "text": content, "markdown": False}
 
 
 def _button(
     label: str, action_type: str, action_name: str = "", value: str = "", style: str = "default"
 ) -> dict[str, Any]:
-    block: dict[str, Any] = {
-        "type": "button",
-        "text": label,
-        "style": style,
-        "action_type": action_type,
-    }
+    """버튼 블록.
+
+    동작 정보는 평평하게 두면 안 되고 `action` 객체 안에 중첩해야 한다.
+    평평한 형태(action_type/action_name)로 보내면 messages.send가
+    [invalid_parameter] "요청한 블록 정보가 올바르지 않습니다"로 거부한다.
+    실물 API 응답으로 확인했다.
+
+    `value`는 필수다. 비어 있으면 action_name으로 채운다. 카카오워크는
+    어떤 버튼이 눌렸는지를 페이로드의 `value`로 알려주므로(실물 확인),
+    이렇게 해두면 action_name이 그대로 되돌아온다.
+
+    label은 20자까지, 한 action 블록에 버튼은 2~3개까지다.
+
+    사양: https://docs.kakaoi.ai/kakao_work/blockkit/buttonblock/
+    """
+    action: dict[str, Any] = {"type": action_type, "value": value or action_name}
     if action_name:
-        block["action_name"] = action_name
-    if value:
-        block["value"] = value
-    return block
+        action["name"] = action_name
+    return {"type": "button", "text": label, "style": style, "action": action}
 
 
 def welcome_blocks(upload_url: str = "") -> tuple[str, list[dict[str, Any]]]:
@@ -233,8 +261,8 @@ def welcome_blocks(upload_url: str = "") -> tuple[str, list[dict[str, Any]]]:
     파일은 API 자체가 없어 [파일 올리기] → 웹 업로드로 받는다.
     """
     buttons = [
-        _button("질문하기", ACTION_CALL_MODAL, action_name="ask_question", style="primary"),
-        _button("대화 정리 요청", ACTION_CALL_MODAL, action_name="submit_chat_log"),
+        _button("질문하기", ACTION_CALL_MODAL, action_name=BUTTON_ASK, style="primary"),
+        _button("대화 정리 요청", ACTION_CALL_MODAL, action_name=BUTTON_CHAT_LOG),
     ]
     body = (
         "무엇이든 물어보세요. Notion·Slack·KakaoWork에 쌓인 문서에서 찾아 "
@@ -243,7 +271,7 @@ def welcome_blocks(upload_url: str = "") -> tuple[str, list[dict[str, Any]]]:
 
     if upload_url:
         buttons.append(
-            _button("파일 올리기", ACTION_OPEN_BROWSER, action_name="upload_file", value=upload_url)
+            _button("파일 올리기", ACTION_OPEN_BROWSER, action_name=BUTTON_UPLOAD, value=upload_url)
         )
         body += "\n문서를 학습시키려면 [파일 올리기]를 눌러주세요."
 
@@ -256,20 +284,25 @@ def welcome_blocks(upload_url: str = "") -> tuple[str, list[dict[str, Any]]]:
     return "업무 도우미", blocks
 
 
-def question_modal() -> dict[str, Any]:
-    """[질문하기] 버튼을 눌렀을 때 Request URL이 돌려줄 모달."""
+def question_modal(value: str = BUTTON_ASK) -> dict[str, Any]:
+    """[질문하기] 버튼을 눌렀을 때 Request URL이 돌려줄 모달.
+
+    `value`는 **필수**다. 빠뜨리면 200을 돌려줘도 카카오워크가 모달 생성을
+    포기하고 "불러오는데 실패"로 끝난다. 여기 담은 값은 사용자가 모달을
+    제출할 때 콜백 페이로드의 value로 되돌아온다.
+    """
     return {
         "view": {
             "title": "질문 입력",
             "accept": "질문하기",
             "decline": "취소",
+            "value": value,
             "blocks": [
-                _text_block("궁금한 내용을 적어주세요."),
+                _label_block("궁금한 내용을 적어주세요."),
                 {
                     "type": "input",
                     "name": FIELD_QUESTION,
                     "required": True,
-                    "multiline": True,
                     "placeholder": "예) 이번 달 배포 일정 알려줘",
                 },
             ],
@@ -277,7 +310,7 @@ def question_modal() -> dict[str, Any]:
     }
 
 
-def chat_log_modal() -> dict[str, Any]:
+def chat_log_modal(value: str = BUTTON_CHAT_LOG) -> dict[str, Any]:
     """대화 내용을 붙여넣어 문서로 남기는 모달.
 
     봇이 채팅방을 읽을 수 없으므로, 남기고 싶은 대화는 사용자가 복사해
@@ -288,13 +321,13 @@ def chat_log_modal() -> dict[str, Any]:
             "title": "대화 내용 저장",
             "accept": "저장하기",
             "decline": "취소",
+            "value": value,
             "blocks": [
-                _text_block("저장할 대화 내용을 붙여넣어 주세요. 나중에 검색됩니다."),
+                _label_block("저장할 대화 내용을 붙여넣어 주세요. 나중에 검색됩니다."),
                 {
                     "type": "input",
                     "name": FIELD_CHAT_LOG,
                     "required": True,
-                    "multiline": True,
                     "placeholder": "채팅방에서 복사한 대화 내용",
                 },
             ],
@@ -305,7 +338,9 @@ def chat_log_modal() -> dict[str, Any]:
 # --- 수집 (사용자가 제출한 내용을 문서로) ----------------------------
 
 
-def build_document(text: str, title: str, created_at: str = "") -> Document:
+def build_document(
+    text: str, title: str, created_at: str = "", submitted_by: str = ""
+) -> Document:
     """KakaoWork에서 온 내용을 Document로 만든다.
 
     source를 "kakaowork"로 고정한다. 이 값이 있어야 답변에 "카카오워크에서
@@ -321,6 +356,7 @@ def build_document(text: str, title: str, created_at: str = "") -> Document:
         url="",
         title=title,
         created_at=created_at or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        submitted_by=submitted_by,
     )
 
 

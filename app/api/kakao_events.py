@@ -43,20 +43,35 @@ router = APIRouter(prefix="/kakao", tags=["kakaowork"])
 # --- 요청 검증 -------------------------------------------------------
 
 
-def _verify(token: str | None) -> None:
-    """콜백 토큰 검사.
+def _verify(*candidates: str | None) -> None:
+    """우리가 등록한 URL로 들어온 요청인지 확인한다.
 
-    KakaoWork가 요청에 서명을 붙이는지, 붙인다면 헤더 이름이 무엇인지는
-    공식 문서에서 확인하지 못했다(추측해서 단정하지 않는다). 그래서 Slack의
-    signing secret 검증에 해당하는 자리를 공유 비밀 헤더로 대신한다.
+    **KakaoWork는 인증 헤더도 서명도 붙이지 않는다**(공식 문서 확인). 보내는
+    헤더는 Content-Type 하나뿐이다. 그래서 Slack의 signing secret에 해당하는
+    검증이 성립하지 않는다.
 
-    관리자 화면에서 커스텀 헤더를 넣을 수 없다면 URL에 비밀 경로를 섞는
-    방식으로 바꾼다. 콜백은 공개망에 열리므로 무방비로 두면 안 된다.
+    대신 관리자에 등록하는 **URL의 쿼리스트링에 공유 비밀을 섞는다.**
+    카카오워크는 등록된 URL을 그대로 호출하므로 토큰이 함께 넘어온다.
+
+        Request URL   https://<도메인>/kakao/request?token=<비밀>
+        Callback URL  https://<도메인>/kakao/callback?token=<비밀>
+
+    헤더(X-Callback-Token)도 계속 받아준다. curl이나 /docs로 직접 찔러
+    테스트할 때 편하기 때문이다.
+
+    콜백은 공개망에 열려 있다. KAKAOWORK_CALLBACK_TOKEN을 비우면 검증이
+    통째로 꺼지므로, 배포 환경에서는 반드시 채운다.
+
+    사양: https://docs.kakaoi.ai/kakao_work/webapireference/reactive/
     """
     expected = settings.kakaowork_callback_token
-    if expected and token != expected:
-        logger.warning("콜백 토큰 불일치. 요청을 거부합니다.")
-        raise HTTPException(status_code=401, detail="invalid callback token")
+    if not expected:
+        return
+    if any(candidate == expected for candidate in candidates):
+        return
+
+    logger.warning("콜백 토큰 불일치. 요청을 거부합니다.")
+    raise HTTPException(status_code=401, detail="invalid callback token")
 
 
 # --- 콜백 페이로드 해석 ----------------------------------------------
@@ -65,9 +80,12 @@ def _verify(token: str | None) -> None:
 def _dig(payload: dict[str, Any], *keys: str) -> str:
     """여러 후보 키를 순서대로 찾아 첫 번째로 잡히는 값을 문자열로.
 
-    KakaoWork는 콜백 페이로드의 전체 필드를 공개 문서에 싣지 않는다.
-    스키마를 못 박는 대신 흔한 위치를 훑고, 원본은 로그로 남긴다.
-    실제 페이로드를 한 번 받아 본 뒤 이 후보 목록을 정리하면 된다.
+    실물 페이로드로 확인한 필드는 아래 두 개이며, 각 호출부에서 첫 번째
+    후보로 두었다. 뒤에 남은 후보들은 사양이 바뀌었을 때를 대비한 여유분이라
+    지워도 동작에는 영향이 없다.
+
+        react_user_id   버튼을 누른 사람
+        value           버튼의 action.value (어떤 버튼인지)
     """
     for key in keys:
         node: Any = payload
@@ -82,7 +100,12 @@ def _dig(payload: dict[str, Any], *keys: str) -> str:
 
 
 def _collect_inputs(payload: dict[str, Any]) -> dict[str, str]:
-    """모달 입력값을 {이름: 값}으로 모은다."""
+    """모달 입력값을 {이름: 값}으로 모은다.
+
+    실물로 확인한 형태는 `actions`이고, 키는 Input Block의 name이다.
+
+        "actions": {"question": "3차 코칭에 대한 정보 알려줘"}
+    """
     for key in ("actions", "inputs", "values", "submit_values"):
         node = payload.get(key)
         if isinstance(node, dict) and node:
@@ -108,18 +131,25 @@ def _flatten(value: Any) -> str:
 @router.post("/request")
 async def request_url(
     payload: dict[str, Any],
+    token: str = "",
     x_callback_token: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    """버튼(action_type=call_modal)을 누르면 카카오워크가 여기를 호출한다.
+    """버튼(action.type=call_modal)을 누르면 카카오워크가 여기를 호출한다.
 
     응답으로 준 모달이 사용자 화면에 뜨고, 거기 입력한 값이
     /kakao/callback으로 넘어온다.
+
+    페이로드 형태(공식 문서 확인):
+        {"type": "request_modal", "value": "<버튼의 action.value>",
+         "action_time": ..., "message": {...}, "react_user_id": ...}
     """
-    _verify(x_callback_token)
-    action_name = _dig(payload, "action_name", "value", "type")
+    _verify(token, x_callback_token)
+    # 어느 버튼인지는 value로 온다. _button()이 value에 action_name을 넣어
+    # 두므로 여기서 "ask_question" / "submit_chat_log"가 그대로 잡힌다.
+    action_name = _dig(payload, "value", "action_name")
     logger.info("Request URL 호출: action=%s", action_name)
 
-    if action_name == "submit_chat_log":
+    if action_name == kakao_service.BUTTON_CHAT_LOG:
         return kakao_service.chat_log_modal()
     return kakao_service.question_modal()
 
@@ -131,13 +161,18 @@ async def request_url(
 async def callback_url(
     payload: dict[str, Any],
     background_tasks: BackgroundTasks,
+    token: str = "",
     x_callback_token: str | None = Header(default=None),
 ) -> dict[str, str]:
     """버튼 클릭 결과와 모달 제출 결과가 들어온다.
 
     Claude 호출과 임베딩은 수 초가 걸리므로 여기서 기다리지 않는다.
+
+    페이로드 형태(공식 문서 확인):
+        {"type": "submission", "actions": {"<input name>": "<입력값>"},
+         "value": "<모달을 띄운 버튼의 value>", "react_user_id": ...}
     """
-    _verify(x_callback_token)
+    _verify(token, x_callback_token)
 
     inputs = _collect_inputs(payload)
     user_id = _dig(payload, "react_user_id", "user_id", "user.id", "message.user_id")
@@ -179,18 +214,41 @@ async def _handle_question(user_id: str, question: str) -> None:
         )
 
 
+HEADLINE_MAX = 30
+
+
+def _headline(text: str) -> str:
+    """본문 첫 줄을 제목에 쓸 만한 길이로 다듬는다.
+
+    제목이 시각뿐이면(`카카오워크 대화 (2026-08-22T05:52:17+00:00)`) 나중에
+    목록에서 어느 것이 무엇인지 알 수 없고, 지우고 싶은 문서를 특정할 수도
+    없다. 사용자는 시각이 아니라 내용을 기억한다.
+    """
+    for line in text.splitlines():
+        line = line.strip()
+        if line:
+            return line[:HEADLINE_MAX] + ("…" if len(line) > HEADLINE_MAX else "")
+    return "제목 없음"
+
+
 async def _handle_chat_log(user_id: str, chat_log: str) -> None:
     """붙여넣은 대화 내용을 KakaoWork 소스 문서로 적재한다."""
     stamped = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    # 시각을 함께 넣어 제목이 겹치지 않게 한다. chunk_id가 제목에서 나오므로
+    # (schemas._build_chunk_id) 제목이 같으면 앞서 저장한 문서를 덮어쓴다.
+    title = f"카카오워크 대화: {_headline(chat_log)} ({stamped})"
     document = kakao_service.build_document(
         text=chat_log,
-        title=f"카카오워크 대화 ({stamped})",
+        title=title,
         created_at=stamped,
+        submitted_by=user_id,
     )
     try:
         chunks = kakao_service.ingest_documents([document])
         await kakao_service.reply_to_user(
-            user_id, f"대화 내용을 저장했습니다. ({chunks}개 조각) 이제 검색됩니다."
+            user_id,
+            f"대화 내용을 저장했습니다. ({chunks}개 조각) 이제 검색됩니다.\n"
+            f"제목: {title}",
         )
     except Exception:
         logger.exception("대화 내용 적재 실패 (user=%s)", user_id)
@@ -277,7 +335,9 @@ async def _ingest_upload(user_id: str, filename: str, text: str) -> None:
 
     같은 파일명으로 다시 올리면 chunk_id가 같아 덮어쓰기(upsert)가 된다.
     """
-    document = kakao_service.build_document(text=text, title=filename)
+    document = kakao_service.build_document(
+        text=text, title=filename, submitted_by=user_id
+    )
     try:
         chunks = kakao_service.ingest_documents([document])
         await kakao_service.reply_to_user(

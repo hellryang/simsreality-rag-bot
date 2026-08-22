@@ -156,16 +156,34 @@ def test_welcome_blocks_hide_the_upload_button_without_a_url():
     _, blocks = kakao_service.welcome_blocks()
     actions = [b for b in blocks if b["type"] == "action"][0]
 
-    assert all(e.get("action_name") != "upload_file" for e in actions["elements"])
+    assert all(e["action"].get("name") != "upload_file" for e in actions["elements"])
 
 
 def test_welcome_blocks_show_the_upload_button_with_a_url():
     _, blocks = kakao_service.welcome_blocks("https://example.com/kakao/upload?token=x")
     actions = [b for b in blocks if b["type"] == "action"][0]
-    upload = [e for e in actions["elements"] if e.get("action_name") == "upload_file"][0]
+    upload = [e for e in actions["elements"] if e["action"].get("name") == "upload_file"][0]
 
-    assert upload["action_type"] == kakao_service.ACTION_OPEN_BROWSER
-    assert upload["value"].startswith("https://")
+    assert upload["action"]["type"] == kakao_service.ACTION_OPEN_BROWSER
+    assert upload["action"]["value"].startswith("https://")
+
+
+def test_buttons_nest_their_action_and_always_carry_a_value():
+    """평평한 action_type/action_name으로 보내면 카카오워크가 400으로 거부한다.
+
+    실물 API에서 [invalid_parameter]를 맞고 확인한 사양이라 회귀를 막아 둔다.
+    사양: https://docs.kakaoi.ai/kakao_work/blockkit/buttonblock/
+    """
+    _, blocks = kakao_service.welcome_blocks()
+    buttons = [b for b in blocks if b["type"] == "action"][0]["elements"]
+
+    assert buttons, "웰컴 메시지에는 버튼이 있어야 한다"
+    for button in buttons:
+        assert "action_type" not in button and "action_name" not in button
+        assert button["style"] in ("default", "primary", "danger")
+        assert len(button["text"]) <= 20
+        # value는 필수다. 비어 있으면 블록 전체가 거부된다.
+        assert button["action"]["value"]
 
 
 def test_question_modal_has_a_text_input():
@@ -180,3 +198,32 @@ def test_chat_log_modal_has_a_text_input():
     names = [b["name"] for b in view["blocks"] if b["type"] == "input"]
 
     assert names == [kakao_service.FIELD_CHAT_LOG]
+
+
+@pytest.mark.parametrize(
+    "build", [kakao_service.question_modal, kakao_service.chat_log_modal]
+)
+def test_modals_carry_every_required_view_field(build):
+    """필수 필드가 하나라도 빠지면 200을 돌려줘도 "모달 불러오기 실패"가 된다.
+
+    value를 빠뜨려서 실제로 겪은 문제라 회귀를 막아 둔다.
+    사양: https://docs.kakaoi.ai/kakao_work/webapireference/reactive/
+    """
+    view = build()["view"]
+
+    for field in ("title", "accept", "decline", "value", "blocks"):
+        assert view.get(field), f"view.{field}가 비어 있으면 모달이 뜨지 않는다"
+
+
+@pytest.mark.parametrize(
+    "build", [kakao_service.question_modal, kakao_service.chat_log_modal]
+)
+def test_modals_use_only_modal_blocks(build):
+    """모달에는 label/input/select만 넣을 수 있다.
+
+    말풍선용 블록(text, header, divider, action…)을 넣으면 거부된다.
+    """
+    blocks = build()["view"]["blocks"]
+
+    assert blocks
+    assert all(b["type"] in ("label", "input", "select") for b in blocks)

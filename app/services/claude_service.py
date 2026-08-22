@@ -159,9 +159,32 @@ async def answer_with_citations(question: str, hits: list[SearchHit]) -> Answer:
     )
 
     text = await _create_message(build_system_prompt(), user_content)
+    return _finalize(text, citations)
 
-    # 모델이 근거 없음을 선언했다면 출처를 붙이지 않는다.
-    if text.strip() == NO_CONTEXT_ANSWER:
+
+def _finalize(text: str, citations: list[Citation]) -> Answer:
+    """모델 출력을 사용자에게 보여줄 답변으로 다듬는다.
+
+    규칙 3은 근거가 없으면 NO_CONTEXT_ANSWER "라고만" 답하라고 하지만,
+    모델이 그 문장을 말한 뒤 설명을 덧붙이는 일이 실제로 있다. 그대로 두면
+    "관련 문서를 찾지 못했습니다"라고 선언하면서 출처를 4건 다는 모순된
+    답변이 나간다.
+
+    이때 뒤에 붙은 설명은 컨텍스트에 근거한 유용한 정보인 경우가 많다
+    (예: "[1]에는 제목만 있고 본문이 없다"). 그래서 설명을 버리는 대신
+    모순되는 첫 문장만 떼어내고 출처는 유지한다.
+
+    프롬프트로 모델 출력을 못 박는 것은 신뢰할 수 없으므로 코드에서 막는다.
+    """
+    stripped = text.strip()
+
+    if stripped == NO_CONTEXT_ANSWER:
         return Answer.no_context()
 
-    return Answer(text=text, citations=citations)
+    if stripped.startswith(NO_CONTEXT_ANSWER):
+        stripped = stripped[len(NO_CONTEXT_ANSWER) :].lstrip()
+        # 문장부호만 남는 등 실질 내용이 없으면 근거 없음으로 처리한다.
+        if not stripped:
+            return Answer.no_context()
+
+    return Answer(text=stripped, citations=citations)

@@ -205,3 +205,27 @@ def test_upload_refuses_a_bad_token(client, handled):
 
     assert "링크를 사용할 수 없습니다" in response.text
     assert handled == []
+
+
+# --- 저장된 문서의 제목 ----------------------------------------------
+
+
+def test_headline_uses_the_first_non_empty_line():
+    """제목이 시각뿐이면 목록에서 어느 것이 무엇인지 알 수 없다."""
+    from app.api.kakao_events import _headline
+
+    assert _headline("\n\n7주차 회의 내용 정리\n둘째 줄") == "7주차 회의 내용 정리"
+
+
+def test_headline_truncates_a_long_line():
+    from app.api.kakao_events import HEADLINE_MAX, _headline
+
+    result = _headline("가" * 100)
+
+    assert result == "가" * HEADLINE_MAX + "…"
+
+
+def test_headline_falls_back_when_there_is_no_text():
+    from app.api.kakao_events import _headline
+
+    assert _headline("   \n\n  ") == "제목 없음"
