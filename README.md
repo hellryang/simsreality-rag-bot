@@ -2,20 +2,25 @@
 
 ㈜심스리얼리티 산학협력 프로젝트 (2026.07.27 ~ 09.18)
 
-Notion·Slack·KakaoWork 세 곳에 흩어진 업무 기록을 모아 의미 기반으로 검색하고,
-**출처가 붙은 답변**을 메신저 봇으로 돌려주는 RAG 챗봇입니다.
+Notion과 KakaoWork에 흩어진 업무 기록을 모아 의미 기반으로 검색하고,
+**출처가 붙은 답변**을 카카오워크 봇으로 돌려주는 RAG 챗봇입니다.
 
 ```
-[Notion]  ─┐
-[Slack]   ─┼─→ FastAPI (병렬 수집 → 청킹 → 임베딩) → 벡터 DB
-[KakaoWork]┘                                          ↓ 유사도 검색
-                                                   Claude API
-                                                      ↓
-                                        출처가 명시된 답변 → 메신저 봇
+[Notion]   ─┐
+[KakaoWork]─┴─→ FastAPI (병렬 수집 → 청킹 → 임베딩) → 벡터 DB
+                                                       ↓ 유사도 검색
+                                                    Claude API
+                                                       ↓
+                              출처가 명시된 답변 → 카카오워크 봇 채팅창
+                                                       │
+                                     사용 로그 → 관리자 대시보드(웹)
 ```
 
-> 세 소스는 **각각 독립적으로 직접** 벡터 DB에 들어갑니다.
+> 두 소스는 **각각 독립적으로 직접** 벡터 DB에 들어갑니다.
 > Notion을 다른 소스의 중간 경유지로 쓰지 않습니다.
+>
+> **질문과 답변은 카카오워크 채팅창에서 이뤄집니다.** 웹은 질의 화면이 아니라
+> 사용량을 보는 **관리자 대시보드**입니다.
 
 ---
 
@@ -53,7 +58,7 @@ uvicorn app.main:app --reload --port 8000
 app/
 ├── main.py              FastAPI 엔트리포인트
 ├── core/                설정(config.py), 서명 검증(security.py)
-├── api/                 Slack·KakaoWork 이벤트 수신, 헬스체크
+├── api/                 KakaoWork 웹훅 수신, 대시보드 API, 헬스체크
 ├── services/            수집·임베딩·벡터DB·Claude 호출·QA 파이프라인
 ├── scheduler/           주기 수집, 변경 감지
 └── models/              Pydantic 스키마
@@ -68,10 +73,10 @@ tests/
 
 | 이름 | 담당 |
 |---|---|
-| 임혜량 (팀장) | KakaoWork, Notion 수집 |
-| 마준서 | KakaoWork, 임베딩·벡터 DB |
-| 이인아 | Slack, Claude 연동 |
-| 송준호 | Slack 수집, 테스트 |
+| 임혜량 (팀장) | 배포, 인용 스키마, Notion 수집 확장, 봇→Notion 쓰기 |
+| 마준서 | KakaoWork 수집·발송·봇 연결, 벡터 DB |
+| 이인아 | 관리자 대시보드 **UI** |
+| 송준호 | 대시보드 **백엔드 API**, 사용 로그 저장 |
 
 `services/vector_store.py`와 `services/qa_pipeline.py`는 **모두가 쓰는 공용 파일**입니다.
 고칠 때는 반드시 PR로 공유하세요.
@@ -83,7 +88,7 @@ tests/
 - 브랜치: `main`(배포) / `develop`(통합) / `feature/기능명`(작업)
 - 커밋 접두사: `feat:` `fix:` `docs:` `refactor:` `test:`
 - PR은 최소 1명 리뷰 후 `develop`에 병합
-- **코칭 회차(8/12, 8/26, 9/9) 전날까지 최신 코드를 push**
+- **코칭 회차(8/26, 9/9) 전날까지 최신 코드를 push**
 
 ```bash
 git checkout develop && git pull
@@ -113,7 +118,7 @@ git push -u origin feature/notion-collect
 | `notion_api_key field required` | `.env`가 없거나, 프로젝트 루트가 아닌 곳에서 실행함 |
 | `ModuleNotFoundError: app` | 프로젝트 루트에서 실행하지 않았거나 가상환경 미활성화 |
 | Claude 404 | 모델 문자열 오타. 모델명은 `core/config.py` 한 곳에서만 관리 |
-| Slack 이벤트 중복 | 3초 안에 응답 못 함. 즉시 200 반환 후 백그라운드 처리 |
+| `찾은 조각: 0건` | 고장이 아닙니다. `build_db.py`를 안 돌렸거나 그 내용이 문서에 없는 것 |
 | `pip install`이 너무 느림 | 정상입니다. sentence-transformers와 torch가 큽니다 |
 
 ---
