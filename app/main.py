@@ -1,10 +1,14 @@
-"""FastAPI 엔트리포인트."""
 from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+from pathlib import Path
 
-from app.api import health, kakao_events, slack_events
+app = FastAPI()
 
-app = FastAPI(title="AI 업무협업 플랫폼 연동 및 자동화 서비스")
+BASE_DIR = Path(__file__).resolve().parent
+TEMPLATES_DIR = BASE_DIR / "templates"
 
-app.include_router(health.router)
-app.include_router(slack_events.router)
-app.include_router(kakao_events.router)
+@app.get("/", response_class=HTMLResponse)
+def get_index_page():
+    file_path = TEMPLATES_DIR / "index.html"
+    with open(file_path, "r", encoding="utf-8") as f:
+        return f.read()
