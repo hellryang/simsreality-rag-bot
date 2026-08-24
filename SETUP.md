@@ -188,9 +188,8 @@ pytest -q                                      # 테스트
 | 관리자 대시보드 (UI / API) | **미구현** (이인아 / 송준호) |
 | 주기 수집 (APScheduler) | **미구현** |
 
-**Slack은 2026-08-22에 범위에서 빠졌습니다.** 코드에 남아 있는
-`app/services/slack_service.py`는 `scrub_pii`를 다시 내보내는 한 줄짜리 파일이라
-지우면 테스트가 깨집니다. **그대로 두세요.**
+`app/services/slack_service.py`는 지우지 마세요. `scrub_pii`를 다시 내보내는
+한 줄짜리 파일인데, 계약 테스트가 이 경로로 import합니다. 지우면 테스트가 깨집니다.
 
 각자 담당은 [TEAM_CHECKLIST.md](./TEAM_CHECKLIST.md)를 보세요.
 

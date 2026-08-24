@@ -2,7 +2,7 @@
 
 > 이 파일은 Claude Code가 저장소 루트에서 자동으로 읽는 프로젝트 지침이다.
 > ㈜심스리얼리티 「AI 기반 업무 협업 플랫폼 연동 및 자동화 서비스 개발」 백엔드 저장소 루트에 둔다.
-> 최종 갱신: 2026-08-22 (4주차 대면회의 반영, Slack 범위 제외)
+> 최종 갱신: 2026-08-24 (문서 전체 정리)
 
 ---
 
@@ -52,9 +52,6 @@
 | 개인 기능 | 최근 물어본 내용 (개인 사용량) 조회 |
 
 웹에 질문 입력창을 만들지 않는다. 사용자가 챗봇을 쓰는 창구는 카카오워크 하나다.
-
-**Slack은 범위에서 제외됐다 (2026-08-22 결정).** Slack 어댑터·이벤트 수신·Bolt 연동을
-새로 만들지 않는다. 다만 코드에 남은 잔재는 **일부러 남겨둔 것이니 지우지 말 것** — §12-2 참조.
 
 ---
 
@@ -463,7 +460,6 @@ python -m app.services.qa_pipeline --chat                  # 대화형. 모델�
 - 확정 스택을 임의로 다른 스택으로 교체 제안
 - Notion을 다른 소스의 중간 경유지로 만드는 구조 제안
 - 검증되지 않은 API 세부 사양을 단정적으로 서술
-- **Slack 어댑터·이벤트 수신·Bolt 연동을 새로 만들거나 제안하는 것** (2026-08-22 범위 제외)
 
 ---
 
@@ -473,7 +469,6 @@ python -m app.services.qa_pipeline --chat                  # 대화형. 모델�
 |---|---|
 | `requirements.txt`에 한글 주석 | pip가 시스템 로캘(한글 윈도우는 cp949)로 읽어서 `UnicodeDecodeError`로 설치 자체가 실패한다. **이 파일은 ASCII 전용으로 유지한다.** 한글 설명은 SETUP.md에 둔다 |
 | 최상단 페이지에 팀원 연락처 | `include_root=True`로 켜기 전에 `scrub_pii`가 반드시 적용돼야 한다. 한 번 임베딩되면 특정 정보만 골라 지우기 어렵다 |
-| `scrub_pii` 위치 | 구현은 `app/core/security.py`에 있고 `slack_service.py`가 재수출한다. 계약 테스트가 그 경로로 import하기 때문이다 (§12-2) |
 | 표 행이 조각 경계에서 잘림 | `chunk_document`는 **줄 경계에서만** 끊는다. 300자를 넘는 긴 한 줄만 글자 수로 자르고 그때만 50자를 겹친다. 이 규칙을 깨면 "년 \| 연락처: ..." 같은 반토막이 생겨 근거로 못 쓴다 |
 | 한 문장에 주제 두 개 | 검색 벡터가 흐려져 필요한 조각이 `top_k`(5) 밖으로 밀린다. 실제로 "담당은 누구고 대면회의는 언제야"에서 한 명이 누락됐다. **질문은 한 번에 한 주제씩** |
 | 키워드 한 단어 질문 | 모델이 "질문이 성립 안 함"으로 보고 거절 문구를 고른다. 시스템 프롬프트에 "한두 단어 키워드도 거절하지 말 것"을 명시해 뒀다. 지우지 말 것 |
@@ -499,7 +494,7 @@ python -m app.services.qa_pipeline --chat                  # 대화형. 모델�
 | `NO_CONTEXT_ANSWER` 상수 + `Answer.no_context()`가 거절 문구의 유일한 출처 | 새 어댑터가 문구를 따로 적으면 `startswith` 판정이 어긋난다 |
 | 임베딩 모델은 `lru_cache`로 1회만 로딩된다 (`embedder._load_model`) | 명령을 새로 실행할 때마다 약 500MB를 다시 읽는다. `--chat` 모드가 존재하는 이유다 |
 | `pytest.ini`에 `asyncio_mode = auto` | async 테스트에 `@pytest.mark.asyncio`를 붙일 필요가 없다. 붙여도 되지만 없어도 돈다 |
-| **Slack 잔재는 일부러 남긴 것** | `schemas.SourceName`의 `"slack"` 리터럴과 `app/services/slack_service.py`(= `scrub_pii` 재수출)는 지우지 않는다. `tests/test_contracts.py`가 그 경로로 import하므로 지우면 테스트 3건이 깨진다. Slack **수집·발송·이벤트 처리**를 새로 만들지 않는다는 뜻이지, 기존 코드를 걷어내라는 뜻이 아니다 |
+| `scrub_pii`는 `app/core/security.py`에 구현, `app/services/slack_service.py`가 재수출 | `tests/test_contracts.py`가 그 경로로 import한다. 이 파일과 `schemas.SourceName`의 `"slack"` 값을 지우거나 이름을 바꾸면 테스트 3건이 깨진다 |
 
 ---
 

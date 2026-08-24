@@ -24,9 +24,8 @@
 | Notion 인라인 DB·캘린더·파일명 읽기 | 미착수 |
 | APScheduler 주기 수집 | 미착수 |
 
-**Slack은 2026-08-22 대면회의에서 범위 제외됐다.** 새로 만들지 않는다.
-단, 코드에 있는 `slack_service.py`(= `scrub_pii` 재수출)와 `SourceName`의 `"slack"`은
-**지우지 않는다.** 계약 테스트가 그 경로로 import하므로 지우면 테스트 3건이 깨진다.
+`app/services/slack_service.py`(= `scrub_pii` 재수출)와 `SourceName`의 `"slack"` 값은
+지우지 않는다. 계약 테스트가 그 경로로 import하므로 지우면 테스트 3건이 깨진다.
 
 ---
 
