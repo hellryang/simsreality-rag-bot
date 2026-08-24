@@ -1,0 +1,51 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            # FastAPI & RAG 챗봇 코드 리뷰
+            
+            이 PR의 코드를 다음 항목으로 검토해주세요:
+            
+            1. **성능 최적화**:
+               - 불필요한 데이터베이스 쿼리
+               - 반복되는 계산이나 API 호출
+               - RAG 검색 효율성
+               - 응답 시간 개선 가능 부분
+            
+            2. **코드 품질**:
+               - 함수/메서드 복잡도 (너무 길거나 복잡한가)
+               - 코드 중복 제거 가능성
+               - 변수/함수명의 명확성
+               - 가독성 개선 방안
+            
+            3. **구조 및 설계**:
+               - FastAPI 라우트 구조
+               - 에러 처리 로직
+               - 함수 분리 필요성
+               - 모듈화 개선
+            
+            4. **로깅 및 디버깅**:
+               - 로깅 부족한 부분
+               - 디버깅 용이성
+            
+            각 이슈에 대해 정확한 줄 번호를 지정하고 개선 방안을 제시해주세요.
+          claude_args: "--max-turns 5 --model claude-opus-4-8"
