@@ -1,174 +1,294 @@
-# 팀 실행 체크리스트 — 3주차 (2026-08-12 3차 코칭)
+# 팀 실행 체크리스트 — 남은 3주 (2026-08-22 대면회의 기준)
 
 > 원본은 Notion, 이 파일은 레포 안의 사본이다. 항목을 끝내면 `- [x]`로 바꿔 develop에 push한다.
+> **마감 2026-09-18. 오늘 기준 27일, 실질 개발 3주 + 마무리 5일.**
 
-## 0. 지금 상태 (2026-08-12 3차 코칭 회의 중 갱신)
+---
+
+## 0. 지금 상태
 
 | 항목 | 상태 |
 |---|---|
-| API 키 4종 (Notion / Claude / Slack / KakaoWork) | 발급 완료 |
-| 폴더 구조 스캐폴딩 | 완료 |
-| Git 저장소 + 팀원 4명 초대 | **완료** (`hellryang/simsreality-rag-bot`) |
-| `app/models/schemas.py` (공용 계약) | **완료 — 테스트 8건 통과** |
-| `app/services/notion_service.py` | 수집 코드 완료 + 테스트 5건 통과 (실제 API 호출 검증은 남음) |
-| `tests/test_contracts.py` (이번 주 과제 명세) | **완료 — 10건이 일부러 실패 상태** |
-| GitHub Actions CI | 설정 완료 (PR마다 자동 테스트) |
-| `embedder` / `vector_store` / `claude_service` / `slack_service` | **docstring만 있음 → 이번 주 과제** |
+| Notion 수집 (하위 페이지·표·토글·중첩) | 완료 |
+| 청킹·임베딩·ChromaDB·인용 답변 | 완료 |
+| 개인정보 마스킹 (`scrub_pii`) | 완료 |
+| CLI 검색·대화형 (`--search`, `--chat`) | 완료 |
+| 테스트 36건 | 전부 통과 |
+| CI (PR마다 pytest) | 동작 중 |
+| **배포** | 미착수 — 설정 파일 없음 |
+| **KakaoWork 어댑터·봇** | 미착수 (`kakao_service.py` 1줄) |
+| **사용 로그 저장소** | 미착수 — 저장할 곳 자체가 없음 |
+| **관리자 대시보드 UI·API** | 미착수 |
+| **인용 메타데이터 (방·이름·날짜)** | 미착수 — 계약 변경 필요 |
+| **봇 → Notion(캘린더) 쓰기** | 미착수 |
+| Notion 인라인 DB·캘린더·파일명 읽기 | 미착수 |
+| APScheduler 주기 수집 | 미착수 |
+
+`app/services/slack_service.py`(= `scrub_pii` 재수출)와 `SourceName`의 `"slack"` 값은
+지우지 않는다. 계약 테스트가 그 경로로 import하므로 지우면 테스트 3건이 깨진다.
 
 ---
 
-## 1. 회의 전 — 전원 공통 (약 40분)
+## 1. 역할 분담 (2026-08-22 재배정)
 
-각자 자기 노트북에서 진행. 4번은 다운로드가 오래 걸리니 **가장 먼저 걸어두고** 나머지를 읽는다.
+| 담당자 | 맡은 것 |
+|---|---|
+| **임혜량** (팀장) | 배포, 인용 스키마 계약, Notion 수집 확장, 봇→Notion 쓰기 |
+| **마준서** | KakaoWork 수집·발송·봇 연결, 벡터 DB |
+| **이인아** | 관리자 대시보드 **UI** |
+| **송준호** | 대시보드 **백엔드 API** + **사용 로그 저장** (`app/api/dashboard.py`, `app/services/usage_log.py`) |
 
-- [ ] `python --version` → 3.11 이상 확인 (아니면 python.org에서 3.11+ 설치)
-- [ ] 팀장이 보낸 GitHub 초대 수락 후 `git clone <레포 URL>`
-- [ ] 가상환경 생성·활성화
-      `python -m venv .venv` → `.venv\Scripts\activate` (Windows)
-- [ ] `pip install -r requirements.txt` — **sentence-transformers가 커서 5~15분 걸린다**
-- [ ] `.env.example`을 복사해 `.env`로 만들고 팀장이 공유한 키 4종 채우기 (`.env`는 절대 커밋 금지)
-- [ ] `uvicorn app.main:app --reload --port 8000` 실행
-- [ ] 브라우저에서 `http://localhost:8000/health` 열어 응답 확인
-- [ ] 성공 화면 캡처해 팀 채널에 공유 (전원 성공 = 오늘의 1차 목표)
+이인아·송준호는 **한 기능을 둘로 나눠 맡는다.** 화면과 API 사이의 요청·응답 모양을
+**작업 시작 전에 먼저 합의해서 문서로 남긴다.** 안 그러면 각자 만들고 안 붙는다.
+합의한 모양은 `tests/test_contracts.py`에 테스트로 박는다(§7).
 
-막히면 혼자 붙들지 말고 즉시 팀 채널에 **에러 메시지 전문**을 붙여넣는다.
+### 웹은 질의 화면이 아니다 (2026-08-22 확정)
 
----
+질문과 답변은 **전부 카카오워크 채팅창**에서 이뤄진다. 웹에 질문 입력창을 만들지 않는다.
 
-## 2. 회의 전 — 개인별
-
-### 임혜량 (팀장 · KakaoWork)
-
-- [ ] GitHub **private** 레포 생성 후 팀원 3명 초대
-- [ ] `git init` → 첫 커밋 → push
-      ```bash
-      git init && git add -A && git commit -m "chore: initial scaffold"
-      git branch -M main && git remote add origin <레포 URL> && git push -u origin main
-      git checkout -b develop && git push -u origin develop
-      ```
-- [ ] GitHub 설정에서 **기본 브랜치를 develop으로 변경**
-- [ ] `git status`에 `.env`가 안 뜨는지 확인 (뜨면 `.gitignore` 점검)
-- [ ] Notion에서 대상 데이터베이스 우측 상단 `⋯` → **연결** → 우리 Integration 추가
-      (이 단계를 빼먹으면 코드가 맞아도 403이 난다. 가장 흔한 실수)
-- [ ] `python -m app.services.notion_service` 실행 → 페이지 5건 출력 확인
-- [ ] 출력 화면 캡처 (**회의 데모 자료**)
-- [ ] 회의 안건 정리 (아래 4번 참고)
-
-### 마준서 (KakaoWork)
-
-- [ ] 공통 세팅 완료
-- [ ] 임베딩 모델 미리 내려받기 (첫 실행 때 약 500MB 다운로드 → 미리 받아두면 회의 후 바로 작업 가능)
-      ```python
-      from sentence_transformers import SentenceTransformer
-      SentenceTransformer("jhgan/ko-sroberta-multitask")
-      ```
-- [ ] KakaoWork 관리자센터에서 **환경변수 이름·발급 방식 확인**
-      (`KAKAOWORK_APP_KEY`가 실제 명칭인지, Webhook URL은 어디서 나오는지 — 추측하지 말고 화면 캡처)
-- [ ] 확인 결과를 회의에서 공유
-
-### 이인아 (Slack)
-
-- [ ] 공통 세팅 완료
-- [ ] `https://api.slack.com/apps`에서 앱 생성 여부 확인, **Bot Token Scopes** 목록 캡처
-      (최소 권한 원칙 — 당장 필요한 건 `channels:history`, `channels:read`, `chat:write`)
-- [ ] 앱을 실제 테스트 채널에 초대했는지 확인
-- [ ] "Slack은 3초 안에 200을 못 받으면 같은 이벤트를 다시 보낸다"는 제약 확인
-      → 즉시 ack 후 백그라운드 처리 구조가 필요한 이유
-
-### 송준호 (Slack)
-
-- [ ] 공통 세팅 완료
-- [ ] `pytest -q` 실행 → 테스트 0건이라도 에러 없이 끝나는지 확인
-- [ ] Slack 대화 이력 수집에 쓸 API 확인 (`conversations.history` / `conversations.list`)
-      필요한 파라미터와 응답 필드 정리
-- [ ] 수집한 메시지에서 **연락처·인사정보 같은 개인정보를 어떻게 걸러낼지** 초안 메모
-      (벡터 DB에 그대로 들어가면 안 됨)
+| 화면 | 보여주는 것 |
+|---|---|
+| 관리자 | 전체 사용량, 사용자별 사용량 |
+| 개인 | 내가 최근 물어본 내용, 내 사용량 |
 
 ---
 
-## 3. 회의에서 확인받을 것
+## 2. 왜 이 순서인가 (읽고 시작할 것)
 
-- [ ] 확정 아키텍처가 맞는지 재확인
-      → 세 소스를 **각각 독립적으로** 벡터 DB에 적재. Notion을 경유지로 쓰지 않음
-- [ ] 답변 품질 기준: 출처 몇 개까지 붙일지, 근거 없을 때 문구를 어떻게 할지
-- [ ] KakaoWork Webhook 방식으로 양방향 대화가 가능한지 (수신만 되는지)
-- [ ] 배포 대상: Railway vs Render 중 어느 쪽으로 갈지
-- [ ] pgvector 마이그레이션 시점 (4~5주차 유지 여부)
-- [ ] 데모 시연: `/health` 응답 + Notion 수집 결과
+두 가지가 다른 모든 일을 막고 있다. **이번 주에 이 둘부터 끝낸다.**
+
+```
+배포 ──────────▶ 봇 Callback URL ──▶ 봇 대화 ──┬─▶ 봇→Notion 쓰기
+                                               │
+인용 스키마 계약 ──▶ KakaoWork 어댑터 ──▶ 방 단위 수집
+                                               │
+                              사용 로그 저장소 ─┴─▶ 대시보드 API ──▶ 대시보드 UI
+```
+
+- **배포**: 카카오워크 봇 설정에 `Callback URL` 칸이 있다. 카카오워크 서버가 우리 서버를
+  호출하는 구조라 **공개 HTTPS 주소가 없으면 봇 자체가 성립하지 않는다.**
+  원래 일정표는 7주차였지만 5주차로 당긴다.
+- **인용 스키마**: 멘토 5주차 요구사항이 "근거자료에 카카오워크의 **날짜·이름·방·내용** 출력"이다.
+  지금 `Citation`은 `number/title/url/source` 4개뿐이라 "누가, 어느 방에서"를 못 붙인다.
+  **어댑터를 만든 뒤에 고치면 이미 적재한 벡터 DB를 통째로 다시 만들어야 한다.**
+
+세 번째로, **사용 로그를 저장할 곳이 지금 없다.** 대시보드와 "최근 물어본 내용"은
+누가 언제 무엇을 물었는지 기록이 있어야 만들 수 있다. ChromaDB는 벡터 저장소라
+이 용도가 아니다. 그리고 **SQLite 파일은 쓰지 않는다** — Railway/Render 무료 티어는
+디스크가 영속이 아니라 재배포 때마다 기록이 날아가서 대시보드가 매번 0부터 시작한다.
+→ **Supabase Postgres 무료 티어**를 권장한다. 나중에 pgvector로 갈 때 같은 DB를 쓴다.
+
+기록할 최소 항목: `asked_at` / `user_id` / `user_name` / `room` / `question` /
+`hit_count` / `top_score` / `answered` / `latency_ms`.
+`question`에는 개인정보가 섞일 수 있으니 **저장 전에 `scrub_pii`를 통과시킨다.**
 
 ---
 
-## 4. 이번 주 남은 작업 (8/13 ~ 8/16)
+## 3. 5주차 — 08/24(월) ~ 08/30(일) · **5차 코칭 08/26(수)**
 
-**이번 주부터는 "알아서 만들기"가 아니라 "정해진 테스트 통과시키기"다.**
-`tests/test_contracts.py`에 각자 만들어야 할 함수의 이름·인자·반환값이 이미
-코드로 적혀 있다. 4명이 동시에 작업해도 주말 통합 때 안 맞는 사고를 막으려는 것이다.
+> **08/25(화)까지 develop에 push.** 코칭 전날이 마감이다.
+> 코칭에서 보여줄 것: **배포 URL이 열리고, 대시보드 화면에 사용 기록이 뜬다.**
+> (봇 왕복 대화는 6주차 목표다. 5주차에는 배포·수집·로그·화면 골격까지)
 
-### 작업 절차 (전원 동일)
+### 임혜량 — 배포 + 계약
+
+- [ ] `Citation`·`Chunk`에 `room`·`author` 추가안을 팀 채널에 올려 합의
+      (필드는 반드시 **기본값 있는 선택 필드**로. `room: str = ""`.
+       필수로 넣으면 Notion 쪽 Chunk 생성이 전부 ValidationError로 죽는다)
+- [ ] `tests/test_contracts.py`에 새 계약 테스트를 **`@pytest.mark.xfail`로 먼저** 추가 → PR
+- [ ] `app/models/schemas.py` 구현 → 통과하면 `xfail` 한 줄 삭제 → PR
+- [ ] Railway 또는 Render 중 하나 선택하고 배포
+      - 시작 명령: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+      - 환경변수를 대시보드에 등록 (`.env` 파일을 올리지 않는다)
+      - **`chroma_data/`는 저장소에 없다.** 배포 서버에서 어떻게 채울지 먼저 정할 것
+        (빌드 시 `build_db.py` 실행 / 볼륨 마운트 / 파일 업로드 중 택1)
+- [ ] 배포 URL의 `/health`가 응답하는지 확인 → 팀 채널 공유
+- [ ] PR #2 (`feature/notion-table-read`)를 develop에 병합 — **08-17부터 열려 있다. 먼저 정리**
+
+### 마준서 — KakaoWork 수집
+
+- [ ] 관리자센터에서 **방(room) 목록·메시지 조회 API의 정확한 명칭과 파라미터 확인**
+      (추측 금지. 화면 캡처로 팀 채널 공유)
+- [ ] 계약 확정 후 `app/services/kakao_service.py`에 수집 함수 구현
+      - 반환은 `Document` 리스트 (`text`/`source="kakaowork"`/`url`/`title`/`created_at` + `room`/`author`)
+      - **방 단위로 선택 수집.** 전체 대화를 무차별로 긁지 않는다
+      - `scrub_pii`를 반드시 통과시킨다 (`app.core.security`에서 import)
+      - 지수 백오프 재시도 포함
+- [ ] `build_db.py`의 `collect_all()`에 `asyncio.gather(..., return_exceptions=True)`로 추가
+- [ ] `python build_db.py --reset` 후 `--search`로 카카오워크 내용이 검색되는지 확인
+
+### 송준호 — 사용 로그 + 대시보드 API
+
+- [ ] **로그 저장소 결정** (Supabase Postgres 권장) → 팀 채널 공유
+      - **SQLite 파일 금지.** 무료 티어 재배포 때 기록이 날아간다
+      - 접속 정보는 `.env`의 `DATABASE_URL`로. 코드에 박지 않는다
+- [ ] 이인아와 응답 모양(JSON 필드명) 합의 → 문서화 → `test_contracts.py`에 xfail로 추가
+- [ ] `app/services/usage_log.py` 신규 — 기록 함수 + 집계 함수
+      - 기록 항목: `asked_at`/`user_id`/`user_name`/`room`/`question`/`hit_count`/`top_score`/`answered`/`latency_ms`
+      - **`question`은 저장 전에 `scrub_pii` 통과** (`app.core.security`에서 import)
+      - 로그 기록 실패가 **답변을 막지 않게** 한다. 기록은 부가 기능이다
+- [ ] `app/api/dashboard.py` 신규 + `app/main.py`에 라우터 등록
+      - 전체 사용량 집계 / 사용자별 사용량 / 특정 사용자의 최근 질문 목록
+      - **관리자 엔드포인트에 토큰 검사를 넣는다.** 개인 조회는 본인 것만 나가게 한다
+- [ ] `tests/`에 API 테스트 추가 (Claude·외부 DB를 부르지 않게 처리)
+
+### 이인아 — 대시보드 UI
+
+- [ ] 스택 결정 후 팀 채널 공유. **판단 기준은 "09/18까지 확실히 도는 것"**
+      - 만들 화면은 표와 숫자, 그래프 몇 개다. 복잡한 상호작용이 없다
+      - Node 툴체인을 들이면 **배포 대상이 하나 더 늘어난다**. FastAPI가 정적 파일을
+        그대로 서빙하면 배포가 하나로 끝난다는 점을 먼저 검토할 것
+- [ ] 관리자 화면: 전체 질문 수, 일자별 추이, **사용자별 사용량 표**
+- [ ] 개인 화면: 내가 최근 물어본 내용 목록 + 내 사용량
+- [ ] "근거를 못 찾은 질문"을 눈에 띄게 표시
+      (`answered`가 `NO_CONTEXT`인 건. **이게 문서에서 뭐가 빠졌는지 알려주는 지표다**)
+- [ ] 데이터가 아직 없을 때의 빈 화면을 먼저 만든다 — API가 늦어도 화면 작업이 안 막힌다
+- [ ] 화면 캡처를 팀 채널에 공유 — **코칭 데모 자료**
+
+### 5차 코칭(08/26) 전에 멘토께 확인할 것
+
+- [ ] "자주 쓰는 챗봇 Top 15 질의" 자료 받기 → **검색 품질 평가 정답셋으로 쓴다**
+- [ ] 노션 데이터 가능 여부 엑셀 표 받기
+- [ ] 관리자 대시보드에 **어떤 지표가 필요한지** 확인 (질문 수 외에 더 필요한 것)
+- [ ] **사용 로그를 남겨도 되는지** — 구성원의 질문 내용이 기록에 남는다. 회사 승인 필요
+- [ ] 카카오워크에서 **어느 방을 수집 대상으로 할지** 지정받기
+- [ ] 배포 URL을 회사 쪽에 공개해도 되는지 (사내 문서가 올라간다)
+
+---
+
+## 4. 6주차 — 08/31(월) ~ 09/06(일)
+
+> 목표: **카카오워크 봇이 실제로 대화하고, 그 결과가 Notion에 쌓인다.**
+
+### 임혜량
+
+- [ ] `notion_service`의 `child_database` 분기 열기 → 인라인 DB·캘린더 읽기
+      (같이 고칠 것: `collect_notion_documents()`가 부르는 `databases.query`는
+       `notion-client` 3.1.0에 없다. `data_sources.query`로 바꿔야 한다)
+- [ ] 파일명 읽기 (`file` 블록) 추가
+- [ ] 봇 → Notion 쓰기: 메시지를 Claude로 요약 → Notion 페이지/캘린더에 저장
+      (Integration Capabilities에 삽입 권한이 켜져 있어야 한다)
+- [ ] Top 15 질의로 검색 품질 측정 → 유사도 표로 정리
+      (0.5 이상 관련 있음 / 0.4~0.5 애매 / 0.4 미만 무관)
+
+### 마준서
+
+- [ ] 관리자센터 봇 설정에 **배포 URL을 Callback URL로 등록**
+- [ ] `app/api/kakao_events.py` 구현 — Webhook 수신 + **서명/출처 검증**
+- [ ] 봇이 질문을 받아 `qa_pipeline` 답변을 방으로 돌려주는 왕복 확인
+- [ ] 답변에 출처(날짜·이름·방)가 붙는지 확인
+
+### 이인아·송준호
+
+- [ ] **봇이 실제로 로그를 남기는지 확인** — 마준서와 붙여서 왕복 테스트
+      (봇 응답 경로에서 `usage_log` 기록 함수를 부르는 지점을 함께 정한다)
+- [ ] 관리자 화면에 적재 현황 추가: 조각 수, 마지막 수집 시각
+- [ ] 개인 화면: 본인 기록만 나오는지 확인. **남의 이력이 보이면 사고다**
+- [ ] **접근 제어 마무리**: 관리자 토큰, 개인 식별 방법 확정
+      (3주짜리 일정이므로 웹 로그인을 새로 만들지 말고, 봇이 발급한 링크·토큰으로
+       본인을 식별하는 단순한 방법을 먼저 검토한다)
+- [ ] 빈 화면·에러 화면 다듬기
+
+---
+
+## 5. 7주차 — 09/07(월) ~ 09/13(일) · **7차 코칭 09/09(수)**
+
+> **09/08(화)까지 push.** 이 주 끝에 **기능 동결(feature freeze)**.
+
+- [ ] APScheduler 주기 수집 (`app/scheduler/jobs.py`) — 변경 감지 → 알림
+- [ ] 전 구간 예외 처리 점검. 한 소스가 죽어도 나머지가 도는지 확인
+- [ ] 부분 실패 로깅 확인, 키가 로그에 안 찍히는지 확인
+- [ ] 테스트 커버리지 점검, CI 초록 유지
+- [ ] **결과보고서·발표자료 착수** (09/14부터 쓰면 늦는다)
+- [ ] **09/13 이후로는 새 기능을 넣지 않는다.** 버그 수정과 문서만
+
+> **pgvector 마이그레이션은 하지 않는다.** 원래 4~5주차 예정이었으나
+> 배포·봇·웹이 전부 미착수인 상태에서 DB를 갈아끼우면 남은 3주를 통째로 쓴다.
+> `vector_store.py` 하나만 고치면 되도록 감싸 뒀으니, 마감 후에 해도 늦지 않다.
+> 7주차에 위 항목이 전부 끝나고 시간이 남을 때만 검토한다.
+
+---
+
+## 6. 마무리 — 09/14(월) ~ 09/18(금, 마감)
+
+- [ ] 결과보고서 완성
+- [ ] 발표자료 완성
+- [ ] **발표 리허설 최소 1회** — 시연 중 실패할 지점을 미리 찾는다
+- [ ] 데모 시나리오 고정: 어떤 질문을 던질지 미리 정하고 **실제로 답이 나오는 질문**으로 준비
+      (문서에 없는 내용을 물으면 유사도 0.4 미만이 나온다. 고장이 아니라 없는 것이다)
+- [ ] 데모 흐름: **카카오워크에서 질문 → 출처 붙은 답변 → 대시보드에 그 기록이 뜬다**
+      한 번에 이어서 보여준다. 대시보드에 데이터가 있어야 하므로 **미리 질문을 쌓아 둔다**
+- [ ] 데모 직전에만 상위 모델로 전환 (`config.py`의 `anthropic_model` 한 곳)
+- [ ] 배포 URL·저장소 접근 권한 최종 확인
+- [ ] 발표 후 공개 URL 내리기
+
+---
+
+## 7. 작업 절차 (전원 동일)
 
 ```bash
 git checkout develop && git pull
 git checkout -b feature/기능명
 
-pytest tests/test_contracts.py -q        # 지금은 x(예상된 실패)로 뜬다
+# 계약이 바뀌는 작업이면: test_contracts.py에 xfail 테스트를 먼저 추가하고 PR
+pytest -q                                # 지금은 x(예상된 실패)
+
 # ... 담당 파일 구현 ...
 pytest -q                                # 통과할 때까지
 
 # 통과하면 그 테스트 위의 @pytest.mark.xfail(...) 한 줄을 지운다
 pytest -q                                # 이제 . (통과)로 바뀐다
 
-git add -A && git commit -m "feat: 청킹·임베딩 구현"
+git add -A && git commit -m "feat: 카카오워크 방 단위 수집"
 git push -u origin feature/기능명         # → GitHub에서 develop으로 PR
 ```
 
-`xfail` 한 줄을 지우는 것이 **"구현 끝났다"는 신고**다. 안 지우면 CI가 실패시킨다.
+`xfail` 한 줄을 지우는 것이 **"구현 끝났다"는 신고**다.
 
-### 담당
+> 2026-08-22 기준 `test_contracts.py`에 `xfail`은 **0개**다(36건 전부 통과).
+> 이번 주 새 계약(인용 메타데이터, KakaoWork 수집, 웹 질의 API)은
+> **담당자가 xfail로 먼저 추가**해야 이 규칙이 계속 작동한다.
 
-| 담당 | 파일 | 통과시켜야 할 테스트 |
-|---|---|---|
-| 임혜량 | `notion_service.py` | (테스트 통과 완료) 실제 Notion API로 전체 수집 검증 + `build_db.py` |
-| 마준서 | `embedder.py`, `vector_store.py` | `chunk_document` 3건, `embed_texts` 1건, `VectorStore` 2건 |
-| 이인아 | `claude_service.py` | `build_system_prompt` 1건, `answer_with_citations` 1건 |
-| 송준호 | `slack_service.py` | `scrub_pii` 3건 + Slack 수집 함수 |
+**테스트를 고쳐서 통과시키지 않는다.** 계약을 바꿔야 한다고 판단되면
+먼저 팀 채널에 올려 합의한 뒤, `test_contracts.py`를 고치는 PR을 따로 낸다.
 
-> **테스트를 고쳐서 통과시키지 않는다.** 계약을 바꿔야 한다고 판단되면
-> 먼저 팀 채널에 올려 합의한 뒤, `test_contracts.py`를 고치는 PR을 따로 낸다.
+### 공용 파일
 
-**주말 전 통합 목표**: 루트의 `build_db.py`로 Notion 문서를 ChromaDB에 넣고,
-`qa_pipeline.py`가 질문 하나에 출처 붙은 답변을 돌려주는 것.
+`app/models/schemas.py`, `vector_store.py`, `qa_pipeline.py`, `embedder.py`,
+`app/core/security.py` — 네 명이 전부 import한다. 고치면 남의 코드가 조용히 깨진다.
+**PR + 팀 채널 공유 필수.**
 
-### 공용 파일 규칙
-
-`app/models/schemas.py`는 4명 전원이 import한다. 여기를 고치면 남의 코드가
-조용히 깨진다. 고쳐야 하면 **PR + 팀 채널 공유가 필수**다.
-`vector_store.py`와 `qa_pipeline.py`도 같은 취급.
+**스키마를 고쳤으면 `python build_db.py --reset`을 돌린다.**
+`chunk_id`는 `sha1(source|url or title|index)`라, 이미 적재된 청크의 메타데이터는
+소급 갱신되지 않는다.
 
 ---
 
-## 5. 전체 일정
+## 8. 전체 일정
 
 | 주차 | 기간 | 목표 |
 |---|---|---|
-| 1~2주 | 07/27 ~ 08/09 | 환경 세팅, API 키 발급 — 완료 |
-| **3주** | **08/10 ~ 08/16** | **레포·환경 통일, Notion 수집, ChromaDB 적재 (3차 코칭 08/12)** |
-| 4주 | 08/17 ~ 08/23 | Claude 인용 답변, Slack·KakaoWork 봇 연결 |
-| 5주 | 08/24 ~ 08/30 | 3소스 통합 검색, pgvector 마이그레이션 (5차 코칭 08/26) |
-| 6주 | 08/31 ~ 09/06 | APScheduler 주기 수집, Notion 자동 저장 |
-| 7주 | 09/07 ~ 09/13 | Railway/Render 배포, 안정화 (7차 코칭 09/09) |
-| 8주 | 09/14 ~ 09/18 | 결과보고서 + 발표자료 |
+| 1~3주 | 07/27 ~ 08/16 | 환경·키·레포, Notion 수집, ChromaDB 적재, 인용 답변 — 완료 |
+| 4주 | 08/17 ~ 08/23 | 표 읽기·PII 마스킹·줄 단위 청킹, **대면회의 08/22** — 완료 |
+| **5주** | **08/24 ~ 08/30** | **배포 + 인용 스키마 + 사용 로그 + 대시보드 골격 + KakaoWork 수집 (5차 코칭 08/26)** |
+| 6주 | 08/31 ~ 09/06 | 봇 연결·왕복 대화, 봇→Notion 쓰기, 인라인 DB·캘린더 읽기, 대시보드 완성 |
+| 7주 | 09/07 ~ 09/13 | 주기 수집, 안정화, 보고서 착수 (7차 코칭 09/09). **09/13 기능 동결** |
+| 8주 | 09/14 ~ 09/18 | 결과보고서 + 발표자료 + 리허설. **09/18 마감** |
 
 ---
 
-## 6. 자주 막히는 지점
+## 9. 자주 막히는 지점
 
 | 증상 | 원인과 해결 |
 |---|---|
-| Notion 403 | 대상 DB가 Integration과 연결되지 않음. Notion 페이지 `⋯` → 연결 → Integration 추가 |
-| `ValidationError: notion_api_key field required` | `.env`가 없거나 실행 위치가 프로젝트 루트가 아님 |
+| Notion 403 / 404 | 대상 페이지가 Integration과 연결되지 않음. Notion 페이지 `⋯` → 연결 → Integration 추가. **웹에 공개 게시(`*.notion.site`)한 것은 API 권한과 무관하다** |
+| `ValidationError: notion_api_key field required` | `.env`가 없거나 실행 위치가 프로젝트 루트가 아님. `Settings()`가 import 시점에 실행되므로 import만 해도 터진다 |
 | `ModuleNotFoundError: app` | 프로젝트 루트에서 실행하지 않았거나 가상환경 미활성화 |
 | Claude 404 | 모델 문자열 오타. `config.py`의 `anthropic_model` 한 곳만 사용 |
-| Slack 이벤트 중복 | 3초 내 ack 미응답. 즉시 200 반환 후 백그라운드 처리 + `event_id` 멱등 처리 |
+| `찾은 조각: 0건` | 고장이 아니다. `build_db.py`를 안 돌렸거나, 그 내용이 문서에 없는 것 |
+| 검색 결과가 전부 유사도 0.4 미만 | 그 내용이 문서에 없다는 뜻. 벡터 검색은 "관련 없음"을 모르고 무조건 가장 가까운 것 top_k개를 준다 |
+| 답변에 한 명이 빠짐 | 질문에 주제가 두 개다. **한 번에 한 주제씩** 묻는다 |
+| 첫 요청이 10~20초 걸림 | 임베딩 모델 500MB 로딩. 서버 시작 시 미리 올린다 |
 | `pip install` 매우 느림 | 정상. sentence-transformers와 torch가 큼 |
 
 **공통 원칙**: 키는 환경변수로만. 하드코딩 금지. `.env`는 커밋 금지.

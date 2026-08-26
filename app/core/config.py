@@ -19,8 +19,8 @@ class Settings(BaseSettings):
     anthropic_api_key: str
     anthropic_model: str = "claude-haiku-4-5-20251001"
 
-    slack_bot_token: str
-    slack_signing_secret: str
+    slack_bot_token: str | None = None
+    slack_signing_secret: str | None = None
     slack_app_token: str | None = None
 
     kakaowork_app_key: str

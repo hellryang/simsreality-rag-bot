@@ -293,6 +293,7 @@ ChromaDB (조각 20개)
 
 | 문서 | 내용 |
 |---|---|
+| [SETUP.md](./SETUP.md) | 팀원 설치 안내 — 코드를 처음 받았을 때 따라 하는 순서 |
 | [README.md](./README.md) | 프로젝트 소개, 처음 클론했을 때 할 일 |
 | [CLAUDE.md](./CLAUDE.md) | 확정 아키텍처, 기술 스택, 코딩 규칙 |
 | [TEAM_CHECKLIST.md](./TEAM_CHECKLIST.md) | 주차별 체크리스트, 역할 분담 |

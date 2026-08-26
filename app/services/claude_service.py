@@ -54,9 +54,12 @@ def build_system_prompt() -> str:
         "컨텍스트에 없는 사실을 지식으로 채워 넣지 않는다.\n"
         "2. 답변의 각 문장 끝에 근거가 된 문서의 출처 번호를 [1], [2] 형태로 붙인다. "
         "한 문장이 여러 문서에 근거하면 [1][2]처럼 이어서 쓴다.\n"
-        f"3. 컨텍스트에 근거가 없으면 지어내지 말고 정확히 "
-        f"'{NO_CONTEXT_ANSWER}'라고만 답한다.\n"
-        "4. 한국어로, 군더더기 없이 답한다."
+        "3. 질문이 'Slack', '운영비용'처럼 한두 단어짜리 키워드여도 거절하지 않는다. "
+        "그 키워드에 관해 컨텍스트에 있는 내용을 정리해서 답한다. "
+        "질문을 더 구체적으로 해달라고 되묻지 않는다.\n"
+        f"4. 컨텍스트에 그 주제가 아예 없을 때만 '{NO_CONTEXT_ANSWER}'라고 답한다. "
+        "이 문장을 쓸 때는 이유나 대안 질문을 덧붙이지 말고 이 문장만 쓴다.\n"
+        "5. 한국어로, 군더더기 없이 답한다."
     )
 
 
@@ -161,7 +164,12 @@ async def answer_with_citations(question: str, hits: list[SearchHit]) -> Answer:
     text = await _create_message(build_system_prompt(), user_content)
 
     # 모델이 근거 없음을 선언했다면 출처를 붙이지 않는다.
-    if text.strip() == NO_CONTEXT_ANSWER:
+    #
+    # `==`가 아니라 startswith인 이유: 모델이 규칙을 어기고
+    # "관련 문서를 찾지 못했습니다. 다만 ...처럼 질문해 주시면" 하고 말을 덧붙이는
+    # 일이 있다. 그러면 `==` 비교가 빗나가서 "못 찾았다"면서 출처 목록이 함께
+    # 나가는 모순된 답이 된다. 앞부분만 보고 판정한다.
+    if text.strip().startswith(NO_CONTEXT_ANSWER):
         return Answer.no_context()
 
     return Answer(text=text, citations=citations)
