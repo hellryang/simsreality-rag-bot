@@ -1,1 +1,104 @@
-<html><head><meta charset="utf-8"><title>Admin</title></head><body><h1>[ADMIN] PM Room Schedule</h1></body></html> 
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>CHONDAEYONG - 관리자 대시보드</title>
+    <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" rel="stylesheet">
+    <style>
+        :root {
+            --bg-main: #191919;
+            --bg-sidebar: #202020;
+            --bg-card: #2f2f2f;
+            --text-primary: rgba(255, 255, 255, 0.9);
+            --text-secondary: #9b9b9b;
+            --border-color: #2f2f2f;
+            --brand-color: #3182ce;
+            --brand-text: #ffffff;
+            --bar-fill: #378ADD;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: "Pretendard", -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif; background: var(--bg-main); color: var(--text-primary); min-height: 100vh; display: flex; }
+
+        .sidebar { width: 240px; background: var(--bg-sidebar); border-right: 1px solid var(--border-color); padding: 20px 16px; flex-shrink: 0; }
+        .workspace-header { font-weight: 800; font-size: 18px; margin-bottom: 24px; }
+        .section-label { font-size: 11px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; padding-left: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .room-item { font-size: 13px; color: var(--text-secondary); padding: 6px 10px; }
+
+        .main { flex: 1; padding: 32px; max-width: 900px; }
+        .scope-label { font-size: 13px; color: var(--text-secondary); margin-bottom: 20px; }
+        .page-title { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+
+        .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 20px 0 28px; }
+        .stat-card { background: var(--bg-card); border-radius: 8px; padding: 16px; }
+        .stat-label { font-size: 13px; color: var(--text-secondary); margin-bottom: 6px; }
+        .stat-value { font-size: 22px; font-weight: 700; }
+
+        .bar-section-label { font-size: 13px; color: var(--text-secondary); margin-bottom: 10px; }
+        .bar-row { margin-bottom: 12px; }
+        .bar-row-top { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
+        .bar-row-top span:last-child { color: var(--text-secondary); }
+        .bar-track { height: 8px; background: var(--bg-card); border-radius: 4px; overflow: hidden; }
+        .bar-fill { height: 100%; background: var(--bar-fill); }
+    </style>
+</head>
+<body>
+
+    <div class="sidebar">
+        <div class="workspace-header">CHONDAEYONG</div>
+        <div class="section-label">전체 방 목록</div>
+        <div class="room-item">📌 PM Room</div>
+        <div class="room-item">📌 일반 소모임방</div>
+    </div>
+
+    <div class="main">
+        <div class="page-title">[ADMIN] 전체 이용 통계</div>
+        <div class="scope-label">PM Room Schedule</div>
+
+        <div class="card-grid" id="cardGrid"></div>
+
+        <div class="bar-section-label">방별 이용률</div>
+        <div id="barList"></div>
+    </div>
+
+    <script>
+        const stats = {
+            cards: [
+                { label: "전체 예약 수", value: "20건" },
+                { label: "평균 이용률", value: "64%" },
+                { label: "이용률 최고", value: "PM Room" },
+                { label: "미사용 방", value: "1개" }
+            ],
+            rooms: [
+                { name: "PM Room", rate: 82 },
+                { name: "일반 소모임방", rate: 45 }
+            ]
+        };
+
+        function render() {
+            const cardGrid = document.getElementById('cardGrid');
+            cardGrid.innerHTML = '';
+            stats.cards.forEach(c => {
+                const el = document.createElement('div');
+                el.className = 'stat-card';
+                el.innerHTML = `<div class="stat-label">${c.label}</div><div class="stat-value">${c.value}</div>`;
+                cardGrid.appendChild(el);
+            });
+
+            const barList = document.getElementById('barList');
+            barList.innerHTML = '';
+            stats.rooms.forEach(r => {
+                const row = document.createElement('div');
+                row.className = 'bar-row';
+                row.innerHTML = `
+                    <div class="bar-row-top"><span>${r.name}</span><span>${r.rate}%</span></div>
+                    <div class="bar-track"><div class="bar-fill" style="width:${r.rate}%"></div></div>
+                `;
+                barList.appendChild(row);
+            });
+        }
+
+        render();
+    </script>
+</body>
+</html>
