@@ -33,6 +33,7 @@ from fastapi.responses import HTMLResponse
 from app.core.config import settings
 from app.models.schemas import Answer
 from app.services import kakao_service, kakao_upload
+from app.services import room_registry as kakao_room_registry
 from app.services.qa_pipeline import answer_question, format_answer
 
 logger = logging.getLogger(__name__)
@@ -174,6 +175,15 @@ async def callback_url(
     """
     _verify(token, x_callback_token)
 
+    # 콜백은 두 종류다.
+    #   1) 모달 제출 : "actions"에 입력값이 들어 있다.
+    #   2) 일반 메시지: "text"에 사용자가 친 문장이 들어 있다(actions 없음).
+    # 일반 메시지를 먼저 갈라낸다. 저장 대상 방이면 그 문장을 벡터 DB에 넣는다.
+    text = _dig(payload, "text").strip()
+    conversation_id = _dig(payload, "conversation_id")
+    if text and not payload.get("actions"):
+        return await _handle_plain_message(payload, text, conversation_id, background_tasks)
+
     inputs = _collect_inputs(payload)
     user_id = _dig(payload, "react_user_id", "user_id", "user.id", "message.user_id")
     logger.info("Callback 수신: user=%s fields=%s", user_id, list(inputs))
@@ -199,6 +209,81 @@ async def callback_url(
         return {"status": "unknown_input"}
 
     return {"status": "ok"}
+
+
+# --- 일반 메시지 (명령 + 자동 저장) ----------------------------------
+
+CMD_START = "저장시작"
+CMD_STOP = "저장중지"
+
+
+async def _handle_plain_message(
+    payload: dict[str, Any],
+    text: str,
+    conversation_id: str,
+    background_tasks: BackgroundTasks,
+) -> dict[str, str]:
+    """채팅창에 그냥 친 문장을 처리한다.
+
+        "저장시작" / "저장중지"  → 이 방을 저장 대상으로 켜고 끈다.
+        그 외 문장               → 이 방이 저장 대상이면 벡터 DB에 넣는다.
+
+    저장 여부는 방(conversation_id) 단위다. 봇이 참여한 방이라고 무조건
+    저장하지 않고, 그 방에서 "저장시작"을 친 방만 저장한다.
+    """
+    user_id = _dig(payload, "user_id", "react_user_id")
+
+    if text == CMD_START:
+        kakao_room_registry.enable(conversation_id)
+        if user_id:
+            await kakao_service.reply_to_user(
+                user_id, "이 방의 대화를 지금부터 저장합니다. 중지하려면 '저장중지'를 보내주세요."
+            )
+        return {"status": "storage_on"}
+
+    if text == CMD_STOP:
+        kakao_room_registry.disable(conversation_id)
+        if user_id:
+            await kakao_service.reply_to_user(user_id, "이 방의 대화 저장을 중지했습니다.")
+        return {"status": "storage_off"}
+
+    if kakao_room_registry.is_enabled(conversation_id):
+        # 임베딩은 수십 ms~초가 걸리므로 즉시 200을 돌려주고 뒤로 뺀다.
+        background_tasks.add_task(_store_message, conversation_id, user_id, text)
+        return {"status": "stored"}
+
+    return {"status": "ignored"}
+
+
+async def _store_message(conversation_id: str, user_id: str, text: str) -> None:
+    """저장 대상 방의 메시지 한 건을 벡터 DB에 넣는다.
+
+    발신자 이름은 콜백에 없으므로 users.info로 조회해 붙인다. 방을 문서
+    단위로 묶는 xlsx 적재와 달리, 실시간 메시지는 한 건씩 들어오므로 짧은
+    한 줄이 조각 하나가 된다. 검색 품질을 위해 아주 짧은 잡담은 거른다.
+    """
+    if len(text) < 3:
+        # "넵", "ㅇㅋ" 같은 초단문은 검색에 무의미하고 노이즈만 된다.
+        logger.debug("너무 짧아 저장하지 않음: %r", text)
+        return
+
+    stamped = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    sender = await kakao_service.get_user_name(user_id) if user_id else ""
+    line = f"[{stamped}] {sender}: {text}" if sender else f"[{stamped}] {text}"
+
+    document = kakao_service.build_document(
+        text=line,
+        # 같은 방의 메시지가 제목이 같으면 chunk_id가 겹쳐 덮어써진다.
+        # 메시지마다 시각을 넣어 별개 문서로 남긴다.
+        title=f"카카오워크 대화 - {conversation_id} ({stamped})",
+        created_at=stamped,
+        submitted_by=user_id,
+        room_label=conversation_id,
+    )
+    try:
+        kakao_service.ingest_documents([document])
+    except Exception:
+        logger.exception("메시지 저장 실패 (conversation_id=%s)", conversation_id)
 
 
 async def _handle_question(user_id: str, question: str) -> None:

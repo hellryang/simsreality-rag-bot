@@ -44,6 +44,10 @@ class Document(BaseModel):
     # 원본에 작성자가 남지만 이쪽은 우리가 기록하지 않으면 추적할 길이 없다.
     # 잘못된 내용을 지울 때 누가 올렸는지 알아야 한다.
     submitted_by: str = ""
+    # 카카오워크 대화가 어느 채팅방에서 왔는지. 방별로 저장·검색·삭제하려면
+    # 필요하다. 방 이름은 바뀔 수 있으므로 표시용 라벨로만 쓰고, 검색·삭제는
+    # 이 값으로 거른다. 부서장방/매니저방처럼 방을 골라 관리하기 위한 것.
+    room_label: str = ""
 
     _check_text = field_validator("text")(_require_non_empty)
 
@@ -62,6 +66,7 @@ class Chunk(BaseModel):
     created_at: str = ""
     chunk_index: int = 0
     submitted_by: str = ""
+    room_label: str = ""
 
     @classmethod
     def from_document(cls, document: Document, text: str, index: int) -> "Chunk":
@@ -81,6 +86,7 @@ class Chunk(BaseModel):
             created_at=document.created_at,
             chunk_index=index,
             submitted_by=document.submitted_by,
+            room_label=document.room_label,
         )
 
     def metadata(self) -> dict[str, str | int]:
@@ -96,6 +102,7 @@ class Chunk(BaseModel):
             "created_at": self.created_at,
             "chunk_index": self.chunk_index,
             "submitted_by": self.submitted_by,
+            "room_label": self.room_label,
         }
 
 
@@ -112,6 +119,7 @@ class StoredDocument(BaseModel):
     url: str = ""
     created_at: str = ""
     submitted_by: str = ""
+    room_label: str = ""
     chunk_ids: list[str] = Field(default_factory=list)
 
     @property

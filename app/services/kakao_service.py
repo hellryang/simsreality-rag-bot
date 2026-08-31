@@ -160,6 +160,31 @@ async def find_user_by_email(email: str) -> dict[str, Any]:
     return (await _call("GET", "/users.find_by_email", params={"email": email}))["user"]
 
 
+# 콜백에는 발신자 이름이 없고 user_id(숫자)만 온다. 저장할 때 사람이 읽는
+# 이름을 붙이려면 users.info로 조회해야 한다. 같은 사람이 연달아 말하는
+# 일이 잦으므로 조회 결과를 캐시해 API 호출을 줄인다.
+_user_name_cache: dict[str, str] = {}
+
+
+async def get_user_name(user_id: str | int) -> str:
+    """user_id로 표시 이름을 얻는다. 실패하면 user_id 문자열을 그대로 쓴다.
+
+    이름 조회 실패로 저장 자체를 막지는 않는다. 이름이 없어도 대화 내용은
+    남기는 편이 낫다.
+    """
+    uid = str(user_id)
+    if uid in _user_name_cache:
+        return _user_name_cache[uid]
+    try:
+        user = (await _call("GET", "/users.info", params={"user_id": uid}))["user"]
+        name = str(user.get("name") or user.get("nickname") or uid)
+    except (KakaoWorkError, KeyError):
+        logger.warning("사용자 이름 조회 실패: user_id=%s", uid)
+        name = uid
+    _user_name_cache[uid] = name
+    return name
+
+
 async def open_conversation(user_id: str | int) -> dict[str, Any]:
     """봇과 해당 멤버의 1:1 대화방을 연다(이미 있으면 기존 방)."""
     return (await _call("POST", "/conversations.open", json={"user_id": str(user_id)}))[
@@ -339,7 +364,11 @@ def chat_log_modal(value: str = BUTTON_CHAT_LOG) -> dict[str, Any]:
 
 
 def build_document(
-    text: str, title: str, created_at: str = "", submitted_by: str = ""
+    text: str,
+    title: str,
+    created_at: str = "",
+    submitted_by: str = "",
+    room_label: str = "",
 ) -> Document:
     """KakaoWork에서 온 내용을 Document로 만든다.
 
@@ -357,6 +386,7 @@ def build_document(
         title=title,
         created_at=created_at or datetime.now(timezone.utc).isoformat(timespec="seconds"),
         submitted_by=submitted_by,
+        room_label=room_label,
     )
 
 

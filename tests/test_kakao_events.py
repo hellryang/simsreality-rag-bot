@@ -229,3 +229,80 @@ def test_headline_falls_back_when_there_is_no_text():
     from app.api.kakao_events import _headline
 
     assert _headline("   \n\n  ") == "제목 없음"
+
+
+# --- 일반 메시지 (저장시작/저장중지 + 자동 저장) --------------------
+
+
+@pytest.fixture
+def registry(monkeypatch, tmp_path):
+    """방 목록을 임시 파일로 격리한다(실제 data/를 건드리지 않도록)."""
+    from app.services import room_registry
+
+    monkeypatch.setattr(room_registry, "_REGISTRY_PATH", tmp_path / "rooms.json")
+    return room_registry
+
+
+@pytest.fixture
+def stored(monkeypatch):
+    """저장 대신 호출 기록만 남긴다."""
+    calls = []
+
+    async def fake_store(conversation_id, user_id, text):
+        calls.append((conversation_id, user_id, text))
+
+    monkeypatch.setattr(kakao_events, "_store_message", fake_store)
+    return calls
+
+
+@pytest.fixture(autouse=True)
+def _no_reply(monkeypatch):
+    async def fake_reply(user_id, text):
+        pass
+
+    monkeypatch.setattr(kakao_service, "reply_to_user", fake_reply)
+
+
+def _msg(text, cid="room-1", uid="u-1"):
+    return {"text": text, "conversation_id": cid, "user_id": uid}
+
+
+def test_storage_start_enables_the_room(client, registry):
+    r = client.post("/kakao/callback", json=_msg("저장시작"), headers=auth())
+
+    assert r.json()["status"] == "storage_on"
+    assert registry.is_enabled("room-1")
+
+
+def test_storage_stop_disables_the_room(client, registry):
+    registry.enable("room-1")
+
+    r = client.post("/kakao/callback", json=_msg("저장중지"), headers=auth())
+
+    assert r.json()["status"] == "storage_off"
+    assert not registry.is_enabled("room-1")
+
+
+def test_message_in_an_enabled_room_is_stored(client, registry, stored):
+    registry.enable("room-1")
+
+    r = client.post("/kakao/callback", json=_msg("배포는 다음 주 화요일입니다"), headers=auth())
+
+    assert r.json()["status"] == "stored"
+    assert stored == [("room-1", "u-1", "배포는 다음 주 화요일입니다")]
+
+
+def test_message_in_a_disabled_room_is_ignored(client, registry, stored):
+    r = client.post("/kakao/callback", json=_msg("잡담 내용"), headers=auth())
+
+    assert r.json()["status"] == "ignored"
+    assert stored == []
+
+
+def test_commands_are_not_stored_as_content(client, registry, stored):
+    """'저장시작' 자체가 대화 내용으로 저장되면 안 된다."""
+    registry.enable("room-1")
+
+    client.post("/kakao/callback", json=_msg("저장시작"), headers=auth())
+
+    assert stored == []

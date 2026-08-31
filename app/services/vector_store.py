@@ -133,6 +133,7 @@ class VectorStore:
                     url=metadata.get("url", ""),
                     created_at=metadata.get("created_at", ""),
                     submitted_by=metadata.get("submitted_by", ""),
+                    room_label=metadata.get("room_label", ""),
                 )
                 documents[key] = document
             document.chunk_ids.append(chunk_id)
