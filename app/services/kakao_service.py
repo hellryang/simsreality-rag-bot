@@ -369,11 +369,16 @@ def build_document(
     created_at: str = "",
     submitted_by: str = "",
     room_label: str = "",
+    sender: str = "",
+    msg_date: str = "",
 ) -> Document:
     """KakaoWork에서 온 내용을 Document로 만든다.
 
     source를 "kakaowork"로 고정한다. 이 값이 있어야 답변에 "카카오워크에서
     가져온 내용"이라는 출처가 붙는다.
+
+    sender/msg_date는 메시지 한 건이 한 문서일 때(xlsx 적재)만 채운다.
+    출처 표시에서 "어느 방에서 언제 누가"를 파싱 없이 보여주기 위한 것.
 
     url이 비어 있는 이유: KakaoWork에는 메시지·파일을 가리키는 공개 링크가
     없다. schemas._build_chunk_id는 url이 없으면 title로 식별하므로,
@@ -387,6 +392,8 @@ def build_document(
         created_at=created_at or datetime.now(timezone.utc).isoformat(timespec="seconds"),
         submitted_by=submitted_by,
         room_label=room_label,
+        sender=sender,
+        msg_date=msg_date,
     )
 
 

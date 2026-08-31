@@ -94,6 +94,10 @@ class VectorStore:
                         title=metadata.get("title", ""),
                         created_at=metadata.get("created_at", ""),
                         chunk_index=int(metadata.get("chunk_index", 0)),
+                        submitted_by=metadata.get("submitted_by", ""),
+                        room_label=metadata.get("room_label", ""),
+                        sender=metadata.get("sender", ""),
+                        msg_date=metadata.get("msg_date", ""),
                     ),
                     score=_distance_to_score(distance),
                 )

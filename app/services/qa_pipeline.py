@@ -61,15 +61,50 @@ async def answer_question(
     return await answer_with_citations(question, hits)
 
 
+def _clean(text: str, limit: int = 60) -> str:
+    """미리보기용으로 줄바꿈을 없애고 길이를 자른다."""
+    one_line = " ".join(text.split())
+    return one_line[:limit] + ("…" if len(one_line) > limit else "")
+
+
+def _citation_line(citation) -> str:
+    """출처 한 건을 '어느 방/문서에서 언제 누가 쓴 내용인지'로 보여준다.
+
+    카카오워크는 방·날짜·작성자·내용 미리보기를, 노션은 제목·URL을 보여준다.
+    사용자가 답변의 근거를 바로 확인할 수 있게 하는 것이 목적이다(신뢰성).
+    """
+    head = f"  [{citation.number}] "
+
+    if citation.source == "kakaowork":
+        # 방 · 날짜 · 작성자
+        meta = " · ".join(
+            part for part in (citation.room_label, citation.msg_date, citation.sender) if part
+        )
+        lines = [head + (meta or "카카오워크")]
+        # 본문 미리보기에서 이미 앞에 붙은 [날짜] 작성자: 는 떼어내고 내용만.
+        body = citation.preview
+        if "] " in body:
+            body = body.split("] ", 1)[1]
+        if ": " in body:
+            body = body.split(": ", 1)[1]
+        if body.strip():
+            lines.append(f'      "{_clean(body)}"')
+        return "\n".join(lines)
+
+    # 노션·슬랙 등 URL이 있는 출처
+    tail = f" — {citation.url}" if citation.url else ""
+    return head + citation.title + tail
+
+
 def format_answer(answer: Answer) -> str:
-    """답변과 출처 목록을 터미널에서 읽기 좋게 만든다."""
+    """답변과 출처 목록을 터미널·카카오워크에서 읽기 좋게 만든다."""
     lines = [answer.text]
 
     if answer.citations:
         lines.append("")
         lines.append("출처:")
         for citation in answer.citations:
-            lines.append(f"  [{citation.number}] {citation.title} — {citation.url}")
+            lines.append(_citation_line(citation))
 
     return "\n".join(lines)
 

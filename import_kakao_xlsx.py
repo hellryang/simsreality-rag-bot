@@ -166,6 +166,9 @@ def main() -> None:
                     title=f"{name} #{i} ({when})",
                     created_at=when,
                     room_label=name,
+                    # 출처 표시·필터용. 본문에도 있지만 메타데이터로 둔다.
+                    sender=sender,
+                    msg_date=when,
                 )
             )
         chunks = kakao_service.ingest_documents(documents)
