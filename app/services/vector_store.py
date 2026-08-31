@@ -178,6 +178,21 @@ class VectorStore:
         logger.info("출처 '%s' 삭제: 조각 %d개", source, len(chunk_ids))
         return len(chunk_ids)
 
+    def delete_source_where_room(self, room_label: str) -> int:
+        """한 채팅방의 메시지를 전부 지운다. 지운 조각 수를 돌려준다.
+
+        메시지마다 문서가 되어 제목이 제각각이므로, 방 단위로 다시 넣기
+        전에 그 방을 비우려면 room_label로 지운다.
+        """
+        result = self._collection.get(where={"room_label": room_label}, include=[])
+        chunk_ids = result["ids"]
+        if not chunk_ids:
+            return 0
+
+        self._collection.delete(ids=chunk_ids)
+        logger.info("방 '%s' 삭제: 조각 %d개", room_label, len(chunk_ids))
+        return len(chunk_ids)
+
     def reset(self) -> None:
         """전부 지운다. 수집 구조를 바꿔 다시 넣을 때 쓴다."""
         self._client.delete_collection(COLLECTION_NAME)

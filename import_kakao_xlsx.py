@@ -102,18 +102,11 @@ def _read_rooms(path: Path, sheet: str) -> dict[str, list[tuple[str, str, str]]]
     return rooms
 
 
-def _document_text(lines: list[tuple[str, str, str]]) -> str:
-    """대화 줄들을 '[날짜] 발신자: 내용' 형태의 본문으로 만든다.
-
-    날짜를 각 줄 앞에 남기는 것이 핵심이다. 청킹으로 잘려도 조각마다
-    날짜가 붙어 있어 일정 추출·교차검증이 가능하다.
-    """
-    out = []
-    for when, sender, message in lines:
-        prefix = f"[{when}] " if when else ""
-        who = f"{sender}: " if sender else ""
-        out.append(f"{prefix}{who}{message}")
-    return "\n".join(out)
+def _message_text(when: str, sender: str, message: str) -> str:
+    """메시지 한 건을 '[날짜] 발신자: 내용' 한 줄로 만든다."""
+    prefix = f"[{when}] " if when else ""
+    who = f"{sender}: " if sender else ""
+    return f"{prefix}{who}{message}"
 
 
 def main() -> None:
@@ -149,23 +142,34 @@ def main() -> None:
         raise SystemExit(f"\n[X] 그런 방이 없습니다: {unknown}")
 
     store = VectorStore()
+    if args.replace:
+        # 메시지마다 문서가 되어 제목이 제각각이라, 방 단위로 지우려면
+        # room_label로 지운다.
+        for name in targets:
+            removed = store.delete_source_where_room(name)
+            if removed:
+                print(f"  [{name}] 기존 조각 {removed}개 삭제")
+
     print()
     total = 0
     for name in targets:
         lines = rooms[name]
-        if args.replace:
-            title = f"카카오워크 대화 - {name}"
-            removed = store.delete_document(title, source="kakaowork")
-            if removed:
-                print(f"  [{name}] 기존 조각 {removed}개 삭제")
-
-        document = kakao_service.build_document(
-            text=_document_text(lines),
-            title=f"카카오워크 대화 - {name}",
-            room_label=name,
-        )
-        chunks = kakao_service.ingest_documents([document])
-        print(f"  [{name}] 메시지 {len(lines)}건 → 조각 {chunks}개 적재")
+        # 메시지 한 건 = 문서 한 건 = 조각 한 개. 방은 room_label로 구분한다.
+        # 방을 통째로 묶지 않으므로, 검색·삭제가 메시지 단위로 정밀해진다.
+        documents = []
+        for i, (when, sender, message) in enumerate(lines):
+            documents.append(
+                kakao_service.build_document(
+                    text=_message_text(when, sender, message),
+                    # 같은 방에서 제목이 겹치면 chunk_id가 겹쳐 덮어써진다.
+                    # 방 이름 + 순번 + 시각으로 유일하게 만든다.
+                    title=f"{name} #{i} ({when})",
+                    created_at=when,
+                    room_label=name,
+                )
+            )
+        chunks = kakao_service.ingest_documents(documents)
+        print(f"  [{name}] 메시지 {len(lines)}건 → 문서 {len(documents)}건 / 조각 {chunks}개")
         total += chunks
 
     print(f"\n완료. 방 {len(targets)}개, 조각 {total}개를 넣었습니다.")
