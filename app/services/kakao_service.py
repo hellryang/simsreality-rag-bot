@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -41,6 +41,15 @@ BASE_URL = "https://api.kakaowork.com/v1"
 _MAX_RETRY = 4
 _TIMEOUT_SEC = 10.0
 
+# 저장 시각은 한국 시간(KST)으로 남긴다. UTC로 남기면 사용자가 보는 시각과
+# 9시간 어긋나 혼란스럽다(예: 21시에 저장했는데 12시로 표시).
+KST = timezone(timedelta(hours=9))
+
+
+def now_kst() -> str:
+    """지금을 KST ISO 문자열로. 저장 시각 표기를 한 곳에서 통일한다."""
+    return datetime.now(KST).isoformat(timespec="seconds")
+
 # 버튼을 눌렀을 때 무슨 일이 일어나는지
 ACTION_CALL_MODAL = "call_modal"  # Request URL로 모달 JSON을 요청
 ACTION_SUBMIT = "submit_action"  # Callback URL로 값 전달
@@ -49,6 +58,8 @@ ACTION_OPEN_BROWSER = "open_system_browser"
 # 모달 입력칸 이름. 콜백에서 이 이름으로 값을 찾는다.
 FIELD_QUESTION = "question"
 FIELD_CHAT_LOG = "chat_log"
+# "내 저장 관리" 모달에서 삭제할 문서를 고르는 Select 칸 이름.
+FIELD_DELETE_TARGET = "delete_target"
 
 # 버튼 식별자. 버튼의 action.value로 나갔다가 request_modal 페이로드의
 # value로 되돌아온다. 세 군데(버튼 생성·모달 응답·라우팅)에서 같은 값을
@@ -56,6 +67,10 @@ FIELD_CHAT_LOG = "chat_log"
 BUTTON_ASK = "ask_question"
 BUTTON_CHAT_LOG = "submit_chat_log"
 BUTTON_UPLOAD = "upload_file"
+BUTTON_MANAGE = "manage_docs"  # [내 저장 조회] — 목록 Select 모달을 연다
+# 상세 메시지의 [삭제] 버튼. value에 "delete:<chunk_id>"를 실어 어떤 글을
+# 지울지 알려준다. submit_action이라 누르면 콜백으로 value가 온다.
+ACTION_DELETE_PREFIX = "delete:"
 
 
 class KakaoWorkError(RuntimeError):
@@ -185,6 +200,33 @@ async def get_user_name(user_id: str | int) -> str:
     return name
 
 
+# 방 이름도 자주 반복되므로 캐시한다. 이름을 못 얻으면(안 지은 방 등)
+# 방 번호를 그대로 쓴다.
+_room_name_cache: dict[str, str] = {}
+
+
+async def get_room_name(conversation_id: str | int) -> str:
+    """conversation_id로 방 이름을 얻는다. 없으면 번호를 그대로 돌려준다.
+
+    conversations.list에서 그 방을 찾아 name을 쓴다. 이름을 안 지은 그룹방은
+    name이 비어 있으므로 번호로 대신한다. 관리자 페이지가 생기면 사람이
+    읽는 라벨로 덮어쓴다.
+    """
+    cid = str(conversation_id)
+    if cid in _room_name_cache:
+        return _room_name_cache[cid]
+    try:
+        result = await _call("GET", "/conversations.list")
+        for room in result.get("conversations", []):
+            if str(room.get("id")) == cid and room.get("name"):
+                _room_name_cache[cid] = str(room["name"])
+                return _room_name_cache[cid]
+    except KakaoWorkError:
+        logger.warning("방 이름 조회 실패: conversation_id=%s", cid)
+    _room_name_cache[cid] = cid  # 이름을 못 얻으면 번호로 대신
+    return cid
+
+
 async def open_conversation(user_id: str | int) -> dict[str, Any]:
     """봇과 해당 멤버의 1:1 대화방을 연다(이미 있으면 기존 방)."""
     return (await _call("POST", "/conversations.open", json={"user_id": str(user_id)}))[
@@ -288,6 +330,7 @@ def welcome_blocks(upload_url: str = "") -> tuple[str, list[dict[str, Any]]]:
     buttons = [
         _button("질문하기", ACTION_CALL_MODAL, action_name=BUTTON_ASK, style="primary"),
         _button("대화 정리 요청", ACTION_CALL_MODAL, action_name=BUTTON_CHAT_LOG),
+        _button("내 저장 조회", ACTION_CALL_MODAL, action_name=BUTTON_MANAGE),
     ]
     body = (
         "무엇이든 물어보세요. Notion·Slack·KakaoWork에 쌓인 문서에서 찾아 "
@@ -360,6 +403,102 @@ def chat_log_modal(value: str = BUTTON_CHAT_LOG) -> dict[str, Any]:
     }
 
 
+# Select는 최대 30개까지. 그보다 많이 저장한 사람은 최근 것만 보여준다.
+MANAGE_LIST_LIMIT = 25
+
+
+def manage_docs_modal(items: list[dict[str, Any]], value: str = BUTTON_MANAGE) -> dict[str, Any]:
+    """내가 저장한 글 목록에서 하나를 고르는 모달(조회 1단계).
+
+    카카오워크는 모달→모달 연결이 안 되므로, 여기서 고른 글의 상세는 모달이
+    아니라 봇 메시지로 보여준다(내용 전체 + [삭제] 버튼). 그 편이 긴 내용도
+    잘리지 않아 오히려 낫다.
+
+    저장한 글이 없으면 Select 대신 안내만 보여준다(Select는 옵션이 비면
+    카카오워크가 거부한다).
+    """
+    if not items:
+        return {
+            "view": {
+                "title": "내 저장 조회",
+                "accept": "확인",
+                "decline": "닫기",
+                "value": value,
+                "blocks": [_label_block("이 방에 저장한 글이 아직 없습니다.")],
+            }
+        }
+
+    options = []
+    for i, item in enumerate(items[:MANAGE_LIST_LIMIT]):
+        # 목록 라벨: 내용 (날짜). 같은 방에서 저장한 것만 보여주므로 방 이름은
+        # 붙이지 않는다. 내용이 잘리지 않게 앞부분을 넉넉히 두고 날짜는 분까지만.
+        preview = " ".join(item["text"].split())[:40]
+        date = item.get("msg_date", "")[:16].replace("T", " ")
+        label = f"{preview} ({date})" if date else preview
+        # value에는 순번(문자열)만 넣는다. 카카오워크가 긴 value를 거부할 수
+        # 있어, 상세를 보여줄 때 순번으로 목록을 다시 조회해 그 글을 찾는다.
+        options.append({"text": label[:100], "value": str(i)})
+
+    return {
+        "view": {
+            "title": "내 저장 조회",
+            "accept": "내용 보기",
+            "decline": "취소",
+            "value": value,
+            "blocks": [
+                _label_block("내용을 볼 글을 선택하세요."),
+                {
+                    "type": "select",
+                    "name": FIELD_DELETE_TARGET,
+                    "required": True,
+                    "options": options,
+                    "placeholder": "글을 선택",
+                },
+            ],
+        }
+    }
+
+
+def doc_detail_blocks(item: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+    """조회에서 고른 글의 상세를 보여주는 메시지(모달 아님).
+
+    모달→모달 연결이 안 되므로 상세는 봇 메시지로 보낸다. 메시지는 길이
+    제한이 덜해 내용 전체를 잘림 없이 보여줄 수 있고, [삭제] 버튼을 함께
+    붙일 수 있다. 버튼 value에 chunk_id를 실어 어떤 글을 지울지 알린다.
+    """
+    room = item.get("room_label", "")
+    date = item.get("msg_date", "")[:16].replace("T", " ")
+    meta = " · ".join(part for part in (room, date, item.get("sender", "")) if part)
+
+    body = f"📄 저장된 글\n{meta}\n\n{item['text']}"
+    blocks = [
+        {"type": "header", "text": "저장된 글", "style": "blue"},
+        _text_block(f"{meta}\n\n{item['text']}"),
+        {"type": "divider"},
+        {
+            # 카카오워크는 action 블록에 버튼이 최소 2개 있어야 한다(실측).
+            # 삭제 옆에 닫기를 둔다. 닫기는 아무 동작 없이 넘어간다.
+            "type": "action",
+            "elements": [
+                _button(
+                    "삭제",
+                    ACTION_SUBMIT,
+                    action_name="delete_doc",
+                    value=f"{ACTION_DELETE_PREFIX}{item['chunk_id']}",
+                    style="danger",
+                ),
+                _button(
+                    "닫기",
+                    ACTION_SUBMIT,
+                    action_name="close",
+                    value="close",
+                ),
+            ],
+        },
+    ]
+    return body, blocks
+
+
 # --- 수집 (사용자가 제출한 내용을 문서로) ----------------------------
 
 
@@ -389,7 +528,7 @@ def build_document(
         source="kakaowork",
         url="",
         title=title,
-        created_at=created_at or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        created_at=created_at or now_kst(),
         submitted_by=submitted_by,
         room_label=room_label,
         sender=sender,

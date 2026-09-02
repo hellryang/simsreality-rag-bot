@@ -316,3 +316,61 @@ def test_delete_source_leaves_other_sources_alone(tmp_path):
     store.delete_source("kakaowork")
 
     assert [d.title for d in store.list_documents()] == ["노션"]
+
+
+# --- 내 저장 관리 (조회 / 삭제) --------------------------------------
+
+
+def _kakao_doc(text, submitted_by, when):
+    return Document(
+        text=text, source="kakaowork", title=f"카카오워크 대화: {text} ({when})",
+        submitted_by=submitted_by, msg_date=when, room_label="백석대",
+    )
+
+
+def test_list_by_submitter_returns_only_that_users_docs(tmp_path):
+    from app.services.embedder import chunk_documents
+    from app.services.vector_store import VectorStore
+
+    store = VectorStore(persist_dir=str(tmp_path))
+    store.add(chunk_documents([
+        _kakao_doc("내 글1", "user-A", "2026-09-01T10:00"),
+        _kakao_doc("내 글2", "user-A", "2026-09-01T11:00"),
+        _kakao_doc("남의 글", "user-B", "2026-09-01T12:00"),
+    ]))
+
+    mine = store.list_by_submitter("user-A")
+
+    assert {m["text"] for m in mine} == {"내 글1", "내 글2"}
+
+
+def test_list_by_submitter_is_newest_first(tmp_path):
+    from app.services.embedder import chunk_documents
+    from app.services.vector_store import VectorStore
+
+    store = VectorStore(persist_dir=str(tmp_path))
+    store.add(chunk_documents([
+        _kakao_doc("먼저", "user-A", "2026-09-01T10:00"),
+        _kakao_doc("나중", "user-A", "2026-09-01T15:00"),
+    ]))
+
+    mine = store.list_by_submitter("user-A")
+
+    assert [m["text"] for m in mine] == ["나중", "먼저"]
+
+
+def test_delete_by_ids_removes_the_chosen_chunk(tmp_path):
+    from app.services.embedder import chunk_documents
+    from app.services.vector_store import VectorStore
+
+    store = VectorStore(persist_dir=str(tmp_path))
+    store.add(chunk_documents([
+        _kakao_doc("지울 글", "user-A", "2026-09-01T10:00"),
+        _kakao_doc("남길 글", "user-A", "2026-09-01T11:00"),
+    ]))
+    target = [m["chunk_id"] for m in store.list_by_submitter("user-A") if m["text"] == "지울 글"]
+
+    removed = store.delete_by_ids(target)
+
+    assert removed == 1
+    assert [m["text"] for m in store.list_by_submitter("user-A")] == ["남길 글"]

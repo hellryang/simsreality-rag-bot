@@ -37,8 +37,8 @@ def handled(monkeypatch):
     async def fake_question(user_id, question):
         calls.append(("question", user_id, question))
 
-    async def fake_chat_log(user_id, chat_log):
-        calls.append(("chat_log", user_id, chat_log))
+    async def fake_chat_log(user_id, chat_log, conversation_id=""):
+        calls.append(("chat_log", user_id, chat_log, conversation_id))
 
     async def fake_upload(user_id, filename, text):
         calls.append(("upload", user_id, filename, text))
@@ -107,13 +107,15 @@ def test_callback_routes_a_chat_log(client, handled):
     client.post(
         "/kakao/callback",
         json={
-            "user_id": "user-7",
-            "inputs": {kakao_service.FIELD_CHAT_LOG: {"value": "A: 안녕\nB: 반가워"}},
+            "react_user_id": "user-7",
+            "message": {"conversation_id": "room-9"},
+            "inputs": {kakao_service.FIELD_CHAT_LOG: {"value": "회의록 정리"}},
         },
         headers=auth(),
     )
 
-    assert handled == [("chat_log", "user-7", "A: 안녕\nB: 반가워")]
+    # 방(conversation_id)까지 함께 넘어가 room_label로 저장된다.
+    assert handled == [("chat_log", "user-7", "회의록 정리", "room-9")]
 
 
 def test_callback_ignores_a_plain_button_click(client, handled):
@@ -251,7 +253,11 @@ def _no_reply(monkeypatch):
     async def fake_reply(conversation_id, text):
         pass
 
+    async def fake_menu(conversation_id):
+        pass
+
     monkeypatch.setattr(kakao_events, "_reply_to_room", fake_reply)
+    monkeypatch.setattr(kakao_events, "_show_menu", fake_menu)
 
 
 def _msg(text, cid="room-1", uid="u-1"):
@@ -274,24 +280,33 @@ def test_save_keyword_is_stripped_from_the_content(client, stored):
     assert stored == [("room-1", "회의록 정리")]
 
 
-def test_save_without_content_is_not_stored(client, stored):
-    r = client.post("/kakao/callback", json=_msg("저장"), headers=auth())
+def test_menu_command_shows_the_menu(client, stored):
+    """'메뉴'를 입력하면 버튼 메뉴를 띄운다."""
+    r = client.post("/kakao/callback", json=_msg("메뉴"), headers=auth())
 
-    assert r.json()["status"] == "empty_save"
+    assert r.json()["status"] == "menu"
     assert stored == []
 
 
-def test_a_plain_message_without_the_command_is_ignored(client, stored):
-    """'저장'으로 시작하지 않는 문장은 저장하지 않는다."""
+def test_save_without_content_gives_a_hint(client, stored):
+    """'저장'만 치면 저장하지 않고 사용법을 안내한다."""
+    r = client.post("/kakao/callback", json=_msg("저장"), headers=auth())
+
+    assert r.json()["status"] == "hint"
+    assert stored == []
+
+
+def test_an_unknown_message_gives_a_hint(client, stored):
+    """저장·메뉴 명령이 아니면 사용법만 안내한다(메뉴를 남발하지 않는다)."""
     r = client.post("/kakao/callback", json=_msg("오늘 점심 뭐 먹지"), headers=auth())
 
-    assert r.json()["status"] == "ignored"
+    assert r.json()["status"] == "hint"
     assert stored == []
 
 
 def test_a_word_starting_with_save_is_not_a_command(client, stored):
-    """'저장'으로 시작하는 다른 단어('저장소')를 명령으로 오인하면 안 된다."""
+    """'저장'으로 시작하는 다른 단어('저장소')를 저장 명령으로 오인하지 않는다."""
     r = client.post("/kakao/callback", json=_msg("저장소 정리 완료"), headers=auth())
 
-    assert r.json()["status"] == "ignored"
+    assert r.json()["status"] == "hint"
     assert stored == []

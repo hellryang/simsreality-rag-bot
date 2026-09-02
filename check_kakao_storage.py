@@ -59,7 +59,10 @@ def main() -> None:
         reverse=True,
     )
     for doc, meta in items[:5]:
-        print(f"  room={meta.get('room_label', '')!r} by={meta.get('submitted_by', '')}")
+        room = meta.get("room_label", "")
+        sender = meta.get("sender", "")
+        date = meta.get("msg_date", "")
+        print(f"  room={room!r} sender={sender!r} date={date!r}")
         print(f"    {doc[:90]!r}")
 
 

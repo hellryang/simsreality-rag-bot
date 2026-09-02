@@ -144,6 +144,47 @@ class VectorStore:
 
         return sorted(documents.values(), key=lambda d: d.chunk_count, reverse=True)
 
+    def list_by_submitter(
+        self, submitted_by: str, room_label: str | None = None, limit: int = 25
+    ) -> list[dict]:
+        """한 사용자가 제출한 문서를 최근 순으로 돌려준다.
+
+        카카오워크에서 "내 저장 관리"로 자기 글을 조회·삭제하기 위한 것.
+        room_label을 주면 그 방에서 저장한 것만 돌려준다(방에 들어가 관리할 때).
+        모달 Select에 채울 것이라 각 항목의 chunk_id·제목·미리보기·시각을 담는다.
+        (모달 저장은 문서 하나 = 조각 하나라 chunk_id 하나로 삭제된다.)
+        """
+        where: dict = {"submitted_by": str(submitted_by)}
+        if room_label:
+            # 두 조건을 모두 만족(AND). ChromaDB는 $and로 여러 조건을 묶는다.
+            where = {"$and": [{"submitted_by": str(submitted_by)}, {"room_label": room_label}]}
+        result = self._collection.get(
+            where=where,
+            include=["documents", "metadatas"],
+        )
+        items = [
+            {
+                "chunk_id": cid,
+                "title": meta.get("title", ""),
+                "text": doc,
+                "room_label": meta.get("room_label", ""),
+                "msg_date": meta.get("msg_date", "") or meta.get("created_at", ""),
+            }
+            for cid, doc, meta in zip(
+                result["ids"], result["documents"], result["metadatas"]
+            )
+        ]
+        items.sort(key=lambda x: x["msg_date"], reverse=True)
+        return items[:limit]
+
+    def delete_by_ids(self, chunk_ids: list[str]) -> int:
+        """chunk_id로 직접 지운다. "내 저장 관리"의 삭제에 쓴다."""
+        if not chunk_ids:
+            return 0
+        self._collection.delete(ids=chunk_ids)
+        logger.info("조각 %d개 삭제 (id 지정)", len(chunk_ids))
+        return len(chunk_ids)
+
     def delete_document(self, title: str, source: str | None = None) -> int:
         """문서 하나에 딸린 조각을 **전부** 지운다. 지운 조각 수를 돌려준다.
 

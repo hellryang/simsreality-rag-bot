@@ -24,7 +24,6 @@ Slack은 3초 내 200 응답이 없으면 재전송한다. KakaoWork의 정확�
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, Header, HTTPException, UploadFile
@@ -34,6 +33,7 @@ from app.core.config import settings
 from app.models.schemas import Answer
 from app.services import kakao_service, kakao_upload
 from app.services.qa_pipeline import answer_question, format_answer
+from app.services.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +151,15 @@ async def request_url(
 
     if action_name == kakao_service.BUTTON_CHAT_LOG:
         return kakao_service.chat_log_modal()
+    if action_name == kakao_service.BUTTON_MANAGE:
+        # 모달을 여는 시점에도 react_user_id가 온다(실측). 그 사람이 이 방에서
+        # 저장한 글만 골라 Select에 채운다. 콜백엔 방 번호가 오므로 이름으로
+        # 바꿔 room_label(이름으로 저장돼 있음)과 맞춘다.
+        user_id = _dig(payload, "react_user_id", "message.user_id")
+        conversation_id = _dig(payload, "message.conversation_id", "conversation_id")
+        room = await kakao_service.get_room_name(conversation_id) if conversation_id else None
+        items = VectorStore().list_by_submitter(user_id, room_label=room) if user_id else []
+        return kakao_service.manage_docs_modal(items)
     return kakao_service.question_modal()
 
 
@@ -185,8 +194,19 @@ async def callback_url(
 
     inputs = _collect_inputs(payload)
     user_id = _dig(payload, "react_user_id", "user_id", "user.id", "message.user_id")
-    logger.info("Callback 수신: user=%s fields=%s", user_id, list(inputs))
+    value = _dig(payload, "value")
+    logger.info("Callback 수신: user=%s value=%s fields=%s", user_id, value, list(inputs))
     logger.debug("Callback 원본: %s", payload)
+
+    # 상세 메시지의 [삭제]/[닫기] 버튼(submit_action)은 모달이 아니라 버튼
+    # 클릭이라 inputs가 없고 value가 실려 온다. 먼저 갈라낸다.
+    if value == "close":
+        return {"status": "closed"}
+    if value.startswith(kakao_service.ACTION_DELETE_PREFIX):
+        chunk_id = value[len(kakao_service.ACTION_DELETE_PREFIX):]
+        conversation_id = _dig(payload, "message.conversation_id", "conversation_id")
+        background_tasks.add_task(_handle_delete, user_id, chunk_id, conversation_id)
+        return {"status": "ok"}
 
     if not inputs:
         # 모달을 거치지 않은 단순 버튼 클릭. 지금은 기록만 한다.
@@ -198,11 +218,18 @@ async def callback_url(
 
     question = inputs.get(kakao_service.FIELD_QUESTION, "").strip()
     chat_log = inputs.get(kakao_service.FIELD_CHAT_LOG, "").strip()
+    select_index = inputs.get(kakao_service.FIELD_DELETE_TARGET, "").strip()
 
     if question:
         background_tasks.add_task(_handle_question, user_id, question)
     elif chat_log:
-        background_tasks.add_task(_handle_chat_log, user_id, chat_log)
+        # 방은 message 안에 있다. 모달을 띄운 방을 그대로 room_label로 남긴다.
+        conversation_id = _dig(payload, "message.conversation_id", "conversation_id")
+        background_tasks.add_task(_handle_chat_log, user_id, chat_log, conversation_id)
+    elif select_index:
+        # 조회 모달에서 글을 골랐다. 상세 내용을 메시지로 보여준다(삭제 버튼 포함).
+        conversation_id = _dig(payload, "message.conversation_id", "conversation_id")
+        background_tasks.add_task(_handle_show_detail, user_id, select_index, conversation_id)
     else:
         logger.warning("알 수 없는 입력: %s", list(inputs))
         return {"status": "unknown_input"}
@@ -222,6 +249,10 @@ async def callback_url(
 #         → "저장 " 뒤의 내용을 벡터 DB에 넣는다.
 
 CMD_SAVE = "저장"
+# 버튼 메뉴를 다시 부르는 명령어. 카카오워크는 봇 이름만(`/연습용`) 치면
+# 콜백을 보내지 않고 "내용을 입력하라"는 자체 UI를 띄운다. 그래서 뒤에
+# 붙일 키워드가 필요하다: `/연습용 메뉴`.
+CMD_MENU = {"메뉴", "도움말", "menu", "help"}
 
 
 async def _handle_plain_message(
@@ -232,25 +263,44 @@ async def _handle_plain_message(
 ) -> dict[str, str]:
     """봇을 호출한 메시지를 처리한다.
 
-        "저장 <내용>"  → <내용>을 벡터 DB에 저장한다.
-        그 외          → 지금은 무시한다(질문 처리는 [질문하기] 모달이 담당).
+        "메뉴" / "도움말"  → [질문하기]·[대화 정리 요청] 버튼 메뉴를 띄운다.
+        "저장 <내용>"      → <내용>을 벡터 DB에 저장한다.
+        그 외              → 무엇을 할 수 있는지 짧게 안내한다.
     """
     user_id = _dig(payload, "user_id", "react_user_id")
     logger.info(
         "일반 메시지 수신: conv=%s user_id=%s text=%r", conversation_id, user_id, text
     )
 
-    # "저장" 또는 "저장 <내용>" 형태인지 본다. "저장"만 있으면 안내한다.
-    if text == CMD_SAVE or text.startswith(CMD_SAVE + " "):
+    # "메뉴" / "도움말" — 버튼 메뉴를 띄운다.
+    if text.strip() in CMD_MENU:
+        await _show_menu(conversation_id)
+        return {"status": "menu"}
+
+    # "저장 <내용>" — 내용을 벡터 DB에 저장한다.
+    if text.startswith(CMD_SAVE + " "):
         content = text[len(CMD_SAVE):].strip()
-        if not content:
-            await _reply_to_room(conversation_id, "저장할 내용을 함께 적어주세요. 예) 저장 다음 주 화요일 3시 킥오프 회의")
-            return {"status": "empty_save"}
+        if content:
+            background_tasks.add_task(_store_message, conversation_id, content)
+            return {"status": "stored"}
 
-        background_tasks.add_task(_store_message, conversation_id, content)
-        return {"status": "stored"}
+    # 알 수 없는 입력. 무엇을 할 수 있는지 알려준다(메뉴 자체를 띄우진 않아
+    # 잡담마다 버튼이 쏟아지는 것을 막는다).
+    await _reply_to_room(
+        conversation_id,
+        "'메뉴'를 입력하면 질문하기·대화 정리 버튼을 띄웁니다. "
+        "바로 저장하려면 '저장 <내용>'을 보내주세요.",
+    )
+    return {"status": "hint"}
 
-    return {"status": "ignored"}
+
+async def _show_menu(conversation_id: str) -> None:
+    """[질문하기]·[대화 정리 요청] 버튼이 담긴 업무 도우미 메뉴를 방에 보낸다."""
+    text, blocks = kakao_service.welcome_blocks()
+    try:
+        await kakao_service.send_message(conversation_id, text, blocks)
+    except kakao_service.KakaoWorkError as exc:
+        logger.error("메뉴 표시 실패 (conv=%s): %s", conversation_id, exc)
 
 
 async def _reply_to_room(conversation_id: str, text: str) -> None:
@@ -272,7 +322,7 @@ async def _store_message(conversation_id: str, text: str) -> None:
     일반 메시지 콜백에는 실제 발신자 정보가 없다(user_id가 봇으로 온다).
     그래서 발신자는 남기지 못하고 내용과 방·시각만 저장한다.
     """
-    stamped = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    stamped = kakao_service.now_kst()
     line = f"[{stamped}] {text}"
 
     document = kakao_service.build_document(
@@ -320,9 +370,17 @@ def _headline(text: str) -> str:
     return "제목 없음"
 
 
-async def _handle_chat_log(user_id: str, chat_log: str) -> None:
-    """붙여넣은 대화 내용을 KakaoWork 소스 문서로 적재한다."""
-    stamped = datetime.now(timezone.utc).isoformat(timespec="seconds")
+async def _handle_chat_log(user_id: str, chat_log: str, conversation_id: str = "") -> None:
+    """모달에 넣은 내용을 KakaoWork 소스 문서로 적재한다.
+
+    사용자가 자기 발언을 직접 넣는 것을 전제로 한다. 그러면 제출자(모달을
+    낸 사람)가 곧 작성자이므로, xlsx 적재와 같은 형태(방·작성자·날짜·내용)로
+    저장할 수 있다. 작성자 이름은 users.info로 조회해 붙인다.
+    """
+    stamped = kakao_service.now_kst()
+    sender = await kakao_service.get_user_name(user_id) if user_id else ""
+    # 방 번호 대신 이름(백석대 등)을 남긴다. 이름을 못 얻으면 번호를 쓴다.
+    room = await kakao_service.get_room_name(conversation_id) if conversation_id else ""
     # 시각을 함께 넣어 제목이 겹치지 않게 한다. chunk_id가 제목에서 나오므로
     # (schemas._build_chunk_id) 제목이 같으면 앞서 저장한 문서를 덮어쓴다.
     title = f"카카오워크 대화: {_headline(chat_log)} ({stamped})"
@@ -330,7 +388,13 @@ async def _handle_chat_log(user_id: str, chat_log: str) -> None:
         text=chat_log,
         title=title,
         created_at=stamped,
+        # sender(이름)는 출처 표시에, submitted_by(ID)는 "내 저장 관리"에서
+        # 본인 문서를 필터·삭제하는 데 쓴다. 이름은 동명이인 위험이 있어
+        # 필터에는 ID를 쓴다. 자기 발언 입력이 전제라 둘은 같은 사람을 가리킨다.
         submitted_by=user_id,
+        room_label=room,
+        sender=sender,
+        msg_date=stamped,
     )
     try:
         chunks = kakao_service.ingest_documents([document])
@@ -342,6 +406,61 @@ async def _handle_chat_log(user_id: str, chat_log: str) -> None:
     except Exception:
         logger.exception("대화 내용 적재 실패 (user=%s)", user_id)
         await kakao_service.reply_to_user(user_id, "저장에 실패했습니다.")
+
+
+async def _handle_show_detail(user_id: str, select_index: str, conversation_id: str = "") -> None:
+    """조회 모달에서 고른 글의 상세를 메시지로 보여준다([삭제] 버튼 포함).
+
+    select_index는 조회 모달이 보여준 목록의 순번이다. 모달을 열 때와 똑같이
+    (같은 사용자·같은 방) 목록을 다시 조회해 그 글을 찾는다.
+    """
+    store = VectorStore()
+    room = await kakao_service.get_room_name(conversation_id) if conversation_id else None
+    items = store.list_by_submitter(user_id, room_label=room)
+    try:
+        item = items[int(select_index)]
+    except (ValueError, IndexError):
+        await _reply(user_id, conversation_id, "글을 찾지 못했습니다.")
+        return
+
+    body, blocks = kakao_service.doc_detail_blocks(item)
+    if conversation_id:
+        try:
+            await kakao_service.send_message(conversation_id, body, blocks)
+            return
+        except kakao_service.KakaoWorkError as exc:
+            logger.error("상세 표시 실패 (conv=%s): %s", conversation_id, exc)
+    # 방을 못 쓰면 최소한 텍스트로라도 알린다.
+    await _reply(user_id, conversation_id, body)
+
+
+async def _handle_delete(user_id: str, chunk_id: str, conversation_id: str = "") -> None:
+    """상세 메시지의 [삭제] 버튼으로 고른 글을 삭제한다.
+
+    버튼 value에서 온 chunk_id가 정말 이 사용자의 것인지 다시 확인한 뒤
+    지운다(남의 글이 지워지지 않도록 방어).
+    """
+    store = VectorStore()
+    room = await kakao_service.get_room_name(conversation_id) if conversation_id else None
+    mine = {item["chunk_id"] for item in store.list_by_submitter(user_id, room_label=room)}
+    if chunk_id not in mine:
+        logger.warning("본인 글이 아니어서 삭제 거부: user=%s chunk=%s", user_id, chunk_id)
+        await _reply(user_id, conversation_id, "삭제할 글을 찾지 못했습니다.")
+        return
+
+    removed = store.delete_by_ids([chunk_id])
+    await _reply(
+        user_id, conversation_id,
+        "삭제했습니다." if removed else "삭제할 글을 찾지 못했습니다.",
+    )
+
+
+async def _reply(user_id: str, conversation_id: str, text: str) -> None:
+    """모달 제출 결과를 알린다. 방이 있으면 방에, 없으면 사용자 DM으로."""
+    if conversation_id:
+        await _reply_to_room(conversation_id, text)
+    elif user_id:
+        await kakao_service.reply_to_user(user_id, text)
 
 
 # --- 파일 업로드 -----------------------------------------------------
