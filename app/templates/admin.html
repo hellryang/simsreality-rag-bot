@@ -44,7 +44,8 @@
         .mini-metric-value { font-size: 18px; font-weight: bold; color: #818CF8; }
         .mini-metric-label { font-size: 11px; color: var(--text-sub); margin-top: 4px; }
 
-        .category-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 12px; }
+        /* 2칸 배열로 수정된 카테고리 그리드 */
+        .category-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-top: 12px; }
         .category-card { background: #161D2B; border: 1px solid var(--border-color); border-radius: 8px; padding: 16px; }
         .cat-percent { font-size: 24px; font-weight: bold; color: #818CF8; margin-bottom: 4px; }
         .cat-title { font-size: 13px; font-weight: bold; }
@@ -126,15 +127,10 @@
                 </div>
             </div>
 
+            <!-- 유형별 질의 분포 (메신저 요약, 노션 연동 2칸 구성) -->
             <div class="chart-card">
                 <h3 style="font-size: 15px; margin-bottom: 12px;">유형별 질의 분포</h3>
                 <div class="category-grid">
-                    <div class="category-card">
-                        <div class="cat-percent">0%</div>
-                        <div class="cat-title">질의응답</div>
-                        <div class="cat-sub">0건 (이번 주)</div>
-                        <div class="progress-bar"><div class="progress-fill" style="width: 0%;"></div></div>
-                    </div>
                     <div class="category-card">
                         <div class="cat-percent" style="color:#818CF8;">0%</div>
                         <div class="cat-title">메신저 요약</div>
@@ -196,7 +192,6 @@
 
         async function fetchData() {
             try {
-                // 토큰 집계 API 동기화
                 const tokenRes = await fetch('/api/tokens');
                 const data = await tokenRes.json();
 
@@ -222,7 +217,6 @@
                     chartInstance.update();
                 }
 
-                // 사용자 로그 저장소 API 동기화
                 const logRes = await fetch('/api/logs');
                 const logData = await logRes.json();
                 const tbody = document.getElementById('log-table-body');
