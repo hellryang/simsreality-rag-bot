@@ -12,200 +12,136 @@
             --text-main: #FFFFFF;
             --text-sub: #8A94A6;
             --accent-purple: #6366F1;
-            --accent-cyan: #06B6D4;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Pretendard', sans-serif; }
         body { background-color: var(--bg-dark); color: var(--text-main); padding: 20px 40px; }
         
-        /* Top Navigation */
         header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 20px; border-bottom: 1px solid var(--border-color); }
-        .logo { font-weight: bold; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+        .logo { font-weight: bold; font-size: 16px; }
         .nav-btn { background: #1E293B; color: #94A3B8; padding: 6px 16px; border-radius: 20px; text-decoration: none; font-size: 13px; }
         .nav-btn.active { background: #4F46E5; color: #fff; }
-        .user-dropdown { display: flex; align-items: center; gap: 8px; background: #161D2B; padding: 4px 12px; border-radius: 20px; font-size: 13px; border: 1px solid var(--border-color); }
 
-        /* User Profile Banner */
         .user-profile-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; margin: 20px 0; display: flex; justify-content: space-between; align-items: center; }
         .profile-info { display: flex; align-items: center; gap: 16px; }
         .avatar-circle { width: 44px; height: 44px; background: #4F46E5; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 16px; }
-        .profile-text h2 { font-size: 18px; margin-bottom: 2px; }
-        .profile-text p { color: var(--text-sub); font-size: 12px; }
-        .active-badge { color: #10B981; font-size: 12px; display: flex; align-items: center; gap: 6px; }
 
-        /* 6 Metric Grid (3x2) */
         .metrics-grid-6 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px; }
-        .card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 18px; position: relative; }
+        .card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 18px; }
         .card-label { color: var(--text-sub); font-size: 12px; margin-bottom: 10px; }
         .card-value { font-size: 26px; font-weight: bold; margin-bottom: 6px; }
         .card-sub { color: var(--text-sub); font-size: 11px; }
-        .card-icon { position: absolute; top: 18px; right: 18px; width: 24px; height: 24px; background: #1A2234; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--accent-purple); }
 
-        /* Tab Navigation */
-        .tab-menu { display: flex; gap: 20px; border-bottom: 1px solid var(--border-color); margin-bottom: 20px; padding-bottom: 10px; }
-        .tab-item { font-size: 14px; color: var(--text-sub); cursor: pointer; text-decoration: none; }
-        .tab-item.active { color: #818CF8; font-weight: bold; border-bottom: 2px solid #818CF8; padding-bottom: 8px; }
-
-        /* Main Content Grid */
         .main-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
         .chart-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; }
-        .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-        .btn-toggle-group { display: flex; background: #161D2B; border-radius: 6px; padding: 2px; }
-        .btn-toggle { border: none; background: transparent; color: var(--text-sub); padding: 4px 10px; font-size: 11px; border-radius: 4px; cursor: pointer; }
-        .btn-toggle.active { background: #4F46E5; color: #fff; }
-
-        /* Chart Footer Metrics */
-        .chart-footer-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 16px; text-align: center; }
-        .mini-metric-value { font-size: 16px; font-weight: bold; color: #818CF8; }
-        .mini-metric-label { font-size: 11px; color: var(--text-sub); margin-top: 4px; }
-
-        /* Side Cards */
         .side-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; margin-bottom: 20px; }
         .info-row { display: flex; justify-content: space-between; font-size: 13px; padding: 10px 0; border-bottom: 1px solid #1E293B; }
-        .progress-bar { height: 4px; background: #1E293B; border-radius: 2px; margin-top: 6px; overflow: hidden; }
-        .progress-fill { height: 100%; background: #6366F1; }
     </style>
 </head>
 <body>
     <header>
         <div class="logo">⚡ KakaoWork AI Bot <span style="color:#64748B; font-size:12px;">SIMSREALITY</span></div>
-        <div style="display: flex; align-items: center; gap: 12px;">
-            <div>
-                <a href="/admin" class="nav-btn">관리자</a>
-                <a href="/user" class="nav-btn active">사용자</a>
-            </div>
-            <div class="user-dropdown">
-                <span style="width: 18px; height: 18px; background: #4F46E5; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 10px;">임</span>
-                <span>임혜량</span>
-            </div>
+        <div>
+            <a href="/admin" class="nav-btn">관리자</a>
+            <a href="/user" class="nav-btn active">사용자</a>
         </div>
     </header>
 
-    <!-- User Banner -->
     <div class="user-profile-card">
         <div class="profile-info">
             <div class="avatar-circle">임</div>
-            <div class="profile-text">
+            <div>
                 <h2>임혜량</h2>
-                <p>AI 기반 업무 협업 플랫폼 · (주)심스리얼리티</p>
+                <p style="color: var(--text-sub); font-size: 13px;">(주)심스리얼리티 · AI 사용자</p>
             </div>
         </div>
-        <div class="active-badge">● 활성</div>
+        <div style="color: #10B981; font-size: 12px;">● 활성</div>
     </div>
 
     <!-- 6 Metric Cards -->
     <div class="metrics-grid-6">
         <div class="card">
             <div class="card-label">금일 토큰</div>
-            <div class="card-value">9.8k</div>
-            <div class="card-sub">금일 요청 21건</div>
-            <div class="card-icon">📅</div>
+            <div class="card-value" id="user-today">0</div>
+            <div class="card-sub">사용 내역 없음</div>
         </div>
         <div class="card">
             <div class="card-label">주간 토큰</div>
-            <div class="card-value">69k</div>
-            <div class="card-sub">주간 요청 148건</div>
-            <div class="card-icon">📈</div>
+            <div class="card-value" id="user-weekly">0</div>
+            <div class="card-sub">사용 내역 없음</div>
         </div>
         <div class="card">
             <div class="card-label">월간 토큰</div>
-            <div class="card-value">89k</div>
-            <div class="card-sub">월간 요청 187건</div>
-            <div class="card-icon">🕒</div>
+            <div class="card-value" id="user-monthly">0</div>
+            <div class="card-sub">사용 내역 없음</div>
         </div>
         <div class="card">
             <div class="card-label">일 평균 토큰</div>
-            <div class="card-value">13.9k</div>
+            <div class="card-value">0</div>
             <div class="card-sub">활성일 기준</div>
-            <div class="card-icon">📊</div>
         </div>
         <div class="card">
             <div class="card-label">일 평균 요청</div>
-            <div class="card-value">30건</div>
+            <div class="card-value">0건</div>
             <div class="card-sub">활성일 기준</div>
-            <div class="card-icon">↔</div>
         </div>
         <div class="card">
             <div class="card-label">총 대화 수</div>
-            <div class="card-value">5건</div>
+            <div class="card-value" id="user-req-count">0건</div>
             <div class="card-sub">이번 달 전체</div>
-            <div class="card-icon">💬</div>
         </div>
     </div>
 
-    <!-- Tabs -->
-    <div class="tab-menu">
-        <div class="tab-item active">사용 통계</div>
-        <div class="tab-item">대화 내역</div>
-    </div>
-
-    <!-- Main Grid -->
     <div class="main-grid">
         <div class="chart-card">
-            <div class="chart-header">
-                <h3 style="font-size: 15px;">일별 사용량 (최근 7일)</h3>
-                <div class="btn-toggle-group">
-                    <button class="btn-toggle active">토큰</button>
-                    <button class="btn-toggle">요청 수</button>
-                </div>
-            </div>
+            <h3 style="font-size: 15px; margin-bottom: 16px;">일별 사용량 (최근 7일)</h3>
             <canvas id="userChart" height="110"></canvas>
-
-            <div class="chart-footer-metrics">
-                <div>
-                    <div class="mini-metric-value">69k</div>
-                    <div class="mini-metric-label">주간 집계</div>
-                </div>
-                <div>
-                    <div class="mini-metric-value">13.9k</div>
-                    <div class="mini-metric-label">일 평균</div>
-                </div>
-                <div>
-                    <div class="mini-metric-value" style="color:#F59E0B;">23k</div>
-                    <div class="mini-metric-label">최대</div>
-                </div>
-                <div>
-                    <div class="mini-metric-value" style="color:#94A3B8;">5일</div>
-                    <div class="mini-metric-label">활성일</div>
-                </div>
-            </div>
         </div>
 
         <div>
-            <!-- Token Breakdown -->
             <div class="side-card">
-                <h3 style="font-size: 15px; margin-bottom: 12px;">토큰 구성</h3>
-                <div class="info-row"><span>Input 토큰</span><span style="font-weight: bold;">57,216</span></div>
-                <div class="progress-bar"><div class="progress-fill" style="width: 64%;"></div></div>
-
-                <div class="info-row" style="margin-top: 10px;"><span>Output 토큰</span><span style="font-weight: bold;">32,184</span></div>
-                <div class="progress-bar"><div class="progress-fill" style="width: 36%; background: #06B6D4;"></div></div>
-            </div>
-
-            <!-- Category Ratio -->
-            <div class="side-card">
-                <h3 style="font-size: 15px; margin-bottom: 12px;">유형별 비율</h3>
-                <div class="info-row"><span>질의응답</span><span style="color:#818CF8; font-weight:bold;">55%</span></div>
-                <div class="info-row"><span>노션 입력 요청</span><span style="color:#818CF8; font-weight:bold;">28%</span></div>
-                <div class="info-row"><span>기타</span><span style="color:#06B6D4; font-weight:bold;">17%</span></div>
+                <h3 style="font-size: 15px; margin-bottom: 12px;">토큰 상세 구성</h3>
+                <div class="info-row"><span>Input 토큰</span><span id="u-input" style="font-weight: bold;">0</span></div>
+                <div class="info-row"><span>Output 토큰</span><span id="u-output" style="font-weight: bold; color: #06B6D4;">0</span></div>
             </div>
         </div>
     </div>
 
     <script>
+        let chartInstance = null;
+
+        async function fetchUserData() {
+            try {
+                const res = await fetch('/api/tokens');
+                const data = await res.json();
+
+                document.getElementById('user-today').innerText = data.today_tokens.toLocaleString();
+                document.getElementById('user-weekly').innerText = data.weekly_tokens.toLocaleString();
+                document.getElementById('user-monthly').innerText = data.monthly_tokens.toLocaleString();
+                document.getElementById('user-req-count').innerText = data.total_requests + "건";
+                document.getElementById('u-input').innerText = data.input_tokens.toLocaleString();
+                document.getElementById('u-output').innerText = data.output_tokens.toLocaleString();
+
+                if (chartInstance && data.daily_usage) {
+                    chartInstance.data.datasets[0].data = data.daily_usage;
+                    chartInstance.update();
+                }
+            } catch (err) {
+                console.error("데이터 동기화 실패:", err);
+            }
+        }
+
         const ctx = document.getElementById('userChart').getContext('2d');
-        new Chart(ctx, {
+        chartInstance = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: ['08.20', '08.21', '08.22', '08.23', '08.24', '08.25', '08.26'],
+                labels: ['D-6', 'D-5', 'D-4', 'D-3', 'D-2', '어제', '오늘'],
                 datasets: [{
-                    label: '토큰 수',
-                    data: [11000, 17000, 9000, 0, 0, 23000, 10000],
+                    label: '토큰 사용량',
+                    data: [0, 0, 0, 0, 0, 0, 0],
                     borderColor: '#6366F1',
                     backgroundColor: 'rgba(99, 102, 241, 0.15)',
                     fill: true,
-                    tension: 0.3,
-                    pointRadius: 4,
-                    pointBackgroundColor: '#818CF8'
+                    tension: 0.3
                 }]
             },
             options: {
@@ -216,6 +152,9 @@
                 }
             }
         });
+
+        fetchUserData();
+        setInterval(fetchUserData, 3000);
     </script>
 </body>
 </html>
