@@ -68,9 +68,10 @@ BUTTON_ASK = "ask_question"
 BUTTON_CHAT_LOG = "submit_chat_log"
 BUTTON_UPLOAD = "upload_file"
 BUTTON_MANAGE = "manage_docs"  # [내 저장 조회] — 목록 Select 모달을 연다
-# 상세 메시지의 [삭제] 버튼. value에 "delete:<chunk_id>"를 실어 어떤 글을
-# 지울지 알려준다. submit_action이라 누르면 콜백으로 value가 온다.
+# 상세 메시지의 버튼. value에 "<동작>:<chunk_id>"를 실어 어떤 글에 대한
+# 무슨 동작인지 알린다. submit_action이라 누르면 콜백으로 value가 온다.
 ACTION_DELETE_PREFIX = "delete:"
+ACTION_EDIT_PREFIX = "edit:"
 
 
 class KakaoWorkError(RuntimeError):
@@ -276,6 +277,21 @@ async def reply_to_user(user_id: str, text: str) -> None:
         logger.error("답장 전송 실패 (user=%s): %s", user_id, exc)
 
 
+async def try_dm(user_id: str, text: str) -> bool:
+    """user_id와 1:1 DM으로 보낸다. 성공하면 True, 실패하면 False.
+
+    콜백의 user_id가 봇으로 오는 등으로 DM을 못 열 수 있다. 호출부가 실패를
+    알아채 방으로 폴백할 수 있도록 성공 여부를 돌려준다.
+    """
+    try:
+        conversation = await open_conversation(user_id)
+        await send_message(conversation["id"], text)
+        return True
+    except KakaoWorkError as exc:
+        logger.warning("DM 전송 실패 (user=%s): %s", user_id, exc)
+        return False
+
+
 # --- Block Kit 조립 --------------------------------------------------
 
 
@@ -466,7 +482,11 @@ def doc_detail_blocks(item: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
     제한이 덜해 내용 전체를 잘림 없이 보여줄 수 있고, [삭제] 버튼을 함께
     붙일 수 있다. 버튼 value에 chunk_id를 실어 어떤 글을 지울지 알린다.
     """
+    # 이름을 못 얻은 방은 room_label에 conversation_id(숫자)가 그대로 들어 있다.
+    # 숫자는 사용자에게 의미가 없으므로 방 표시를 생략한다.
     room = item.get("room_label", "")
+    if room.isdigit():
+        room = ""
     date = item.get("msg_date", "")[:16].replace("T", " ")
     meta = " · ".join(part for part in (room, date, item.get("sender", "")) if part)
 
@@ -477,7 +497,6 @@ def doc_detail_blocks(item: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
         {"type": "divider"},
         {
             # 카카오워크는 action 블록에 버튼이 최소 2개 있어야 한다(실측).
-            # 삭제 옆에 닫기를 둔다. 닫기는 아무 동작 없이 넘어간다.
             "type": "action",
             "elements": [
                 _button(
@@ -488,10 +507,11 @@ def doc_detail_blocks(item: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
                     style="danger",
                 ),
                 _button(
-                    "닫기",
+                    "수정",
                     ACTION_SUBMIT,
-                    action_name="close",
-                    value="close",
+                    action_name="edit_doc",
+                    value=f"{ACTION_EDIT_PREFIX}{item['chunk_id']}",
+                    style="primary",
                 ),
             ],
         },

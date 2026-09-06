@@ -129,3 +129,54 @@ def test_a_normal_answer_is_left_alone():
 
     assert answer.text == "3주차 회의는 8월 12일이었습니다. [1]"
     assert answer.citations == citations
+
+
+# --- 인용된 출처만 남기기 --------------------------------------------
+
+
+def _c(n, title=""):
+    from app.models.schemas import Citation
+    return Citation(number=n, title=title or f"문서{n}", url=f"http://x/{n}", source="notion")
+
+
+def test_keeps_only_cited_and_renumbers():
+    """답변에 실제 인용된 출처만 남기고 1부터 다시 번호를 매긴다."""
+    from app.services.claude_service import _keep_cited_only
+
+    cites = [_c(1), _c(2), _c(3), _c(4), _c(5)]
+    text = "회의가 있습니다. [3] 안건 정리. [3] 제목 확인. [2]"
+
+    new_text, new_cites = _keep_cited_only(text, cites)
+
+    # [3]→[1], [2]→[2] 로 당겨짐
+    assert new_text == "회의가 있습니다. [1] 안건 정리. [1] 제목 확인. [2]"
+    assert [c.number for c in new_cites] == [1, 2]
+    # 원래 3번 문서가 새 1번
+    assert new_cites[0].title == "문서3"
+    assert new_cites[1].title == "문서2"
+
+
+def test_keeps_all_when_no_citation_marks():
+    """본문에 [n] 표기가 없으면 기존 출처를 그대로 둔다."""
+    from app.services.claude_service import _keep_cited_only
+
+    cites = [_c(1), _c(2)]
+    text = "출처 표기가 없는 답변입니다."
+
+    new_text, new_cites = _keep_cited_only(text, cites)
+
+    assert new_text == text
+    assert len(new_cites) == 2
+
+
+def test_drops_unrelated_sources():
+    """인용 안 된 무관한 출처(top-k에 딸려온 것)는 제거된다."""
+    from app.services.claude_service import _keep_cited_only
+
+    cites = [_c(1, "관련"), _c(2, "무관")]
+    text = "답변입니다. [1]"
+
+    _, new_cites = _keep_cited_only(text, cites)
+
+    assert len(new_cites) == 1
+    assert new_cites[0].title == "관련"

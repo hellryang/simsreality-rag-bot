@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from functools import lru_cache
 
 import anthropic
@@ -187,4 +188,41 @@ def _finalize(text: str, citations: list[Citation]) -> Answer:
         if not stripped:
             return Answer.no_context()
 
+    stripped, citations = _keep_cited_only(stripped, citations)
     return Answer(text=stripped, citations=citations)
+
+
+def _keep_cited_only(text: str, citations: list[Citation]) -> tuple[str, list[Citation]]:
+    """답변에 실제로 인용된 출처만 남기고 번호를 1부터 다시 매긴다.
+
+    검색은 유사도 top-k를 뽑지만 Claude가 다 쓰는 것은 아니다. 인용 안 된
+    출처(질문과 스친 무관한 것 포함)를 그대로 두면 답변과 출처가 어긋나 보인다.
+    그래서 본문의 [숫자]를 훑어 쓰인 것만 남기고, [3]만 쓰였으면 [1]로 당긴다.
+    """
+    used = [int(n) for n in re.findall(r"\[(\d+)\]", text)]
+    if not used:
+        # 인용 표기가 하나도 없으면(모델이 [n]을 안 붙임) 기존 출처를 유지한다.
+        return text, citations
+
+    # 등장 순서대로 중복 없이. 이 순서가 새 번호(1,2,3…)가 된다.
+    order: list[int] = []
+    for n in used:
+        if n not in order:
+            order.append(n)
+
+    old_to_new = {old: i + 1 for i, old in enumerate(order)}
+    by_number = {c.number: c for c in citations}
+
+    new_citations: list[Citation] = []
+    for old in order:
+        c = by_number.get(old)
+        if c is not None:
+            new_citations.append(c.model_copy(update={"number": old_to_new[old]}))
+
+    # 본문의 [old]를 [new]로 바꾼다. 여러 자리 충돌을 피해 임시 토큰을 거친다.
+    new_text = text
+    for old, new in old_to_new.items():
+        new_text = new_text.replace(f"[{old}]", f"[#{new}#]")
+    new_text = re.sub(r"\[#(\d+)#\]", r"[\1]", new_text)
+
+    return new_text, new_citations

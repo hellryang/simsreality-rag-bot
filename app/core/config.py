@@ -5,7 +5,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    # extra="ignore": .env에 여기 정의하지 않은 변수가 있어도 무시한다.
+    # (기본값은 forbid라, 검증용으로 넣어 둔 키 등이 있으면 앱이 시작 못 한다.)
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
 
     notion_api_key: str
     # 수집 대상은 둘 중 하나만 있으면 된다.

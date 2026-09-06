@@ -198,15 +198,23 @@ async def callback_url(
     logger.info("Callback 수신: user=%s value=%s fields=%s", user_id, value, list(inputs))
     logger.debug("Callback 원본: %s", payload)
 
-    # 상세 메시지의 [삭제]/[닫기] 버튼(submit_action)은 모달이 아니라 버튼
+    # 상세 메시지의 [삭제]/[수정] 버튼(submit_action)은 모달이 아니라 버튼
     # 클릭이라 inputs가 없고 value가 실려 온다. 먼저 갈라낸다.
-    if value == "close":
-        return {"status": "closed"}
     if value.startswith(kakao_service.ACTION_DELETE_PREFIX):
         chunk_id = value[len(kakao_service.ACTION_DELETE_PREFIX):]
         conversation_id = _dig(payload, "message.conversation_id", "conversation_id")
         background_tasks.add_task(_handle_delete, user_id, chunk_id, conversation_id)
         return {"status": "ok"}
+    if value.startswith(kakao_service.ACTION_EDIT_PREFIX):
+        # 수정은 아직 미구현. 카카오워크가 모달 기본값·모달 체이닝을 지원하지
+        # 않아, 기존 내용을 채워 보여주는 방식을 정하는 중이다(웹 리다이렉션
+        # 또는 카카오워크 문의 결과에 따라). 지금은 안내만 한다.
+        conversation_id = _dig(payload, "message.conversation_id", "conversation_id")
+        background_tasks.add_task(
+            _reply, user_id, conversation_id,
+            "수정 기능은 준비 중입니다. 지금은 삭제 후 다시 저장해 주세요.",
+        )
+        return {"status": "edit_pending"}
 
     if not inputs:
         # 모달을 거치지 않은 단순 버튼 클릭. 지금은 기록만 한다.
@@ -442,25 +450,35 @@ async def _handle_delete(user_id: str, chunk_id: str, conversation_id: str = "")
     """
     store = VectorStore()
     room = await kakao_service.get_room_name(conversation_id) if conversation_id else None
-    mine = {item["chunk_id"] for item in store.list_by_submitter(user_id, room_label=room)}
-    if chunk_id not in mine:
+    # 삭제하기 전에 그 글 내용을 확보해 둔다(삭제 후엔 못 읽으므로).
+    mine = {item["chunk_id"]: item for item in store.list_by_submitter(user_id, room_label=room)}
+    target = mine.get(chunk_id)
+    if target is None:
         logger.warning("본인 글이 아니어서 삭제 거부: user=%s chunk=%s", user_id, chunk_id)
         await _reply(user_id, conversation_id, "삭제할 글을 찾지 못했습니다.")
         return
 
     removed = store.delete_by_ids([chunk_id])
-    await _reply(
-        user_id, conversation_id,
-        "삭제했습니다." if removed else "삭제할 글을 찾지 못했습니다.",
-    )
+    if removed:
+        preview = " ".join(target["text"].split())[:40]
+        await _reply(user_id, conversation_id, f"삭제했습니다:\n{preview}")
+    else:
+        await _reply(user_id, conversation_id, "삭제할 글을 찾지 못했습니다.")
 
 
 async def _reply(user_id: str, conversation_id: str, text: str) -> None:
-    """모달 제출 결과를 알린다. 방이 있으면 방에, 없으면 사용자 DM으로."""
+    """조회·삭제 결과를 본인 DM으로 알린다(그룹방을 지저분하게 하지 않도록).
+
+    DM 발송은 reply_to_user가 conversations.open으로 1:1 방을 열어 보낸다.
+    다만 콜백의 user_id가 봇으로 오는 경우 DM이 실패할 수 있어, 실패하면
+    메시지가 온 방으로 보낸다(그래야 사용자가 결과를 못 보는 일이 없다).
+    """
+    if user_id:
+        ok = await kakao_service.try_dm(user_id, text)
+        if ok:
+            return
     if conversation_id:
         await _reply_to_room(conversation_id, text)
-    elif user_id:
-        await kakao_service.reply_to_user(user_id, text)
 
 
 # --- 파일 업로드 -----------------------------------------------------
