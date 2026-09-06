@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from pathlib import Path
-from backend.notion_service import fetch_notion_schedules  # 노션 연동 모듈 불러오기
+from backend.notion_service import fetch_notion_schedules
 
 app = FastAPI()
 
@@ -18,7 +18,7 @@ def get_index_page():
     file_path = TEMPLATES_DIR / "index.html"
     with open(file_path, "r", encoding="utf-8") as f:
         return f.read()
-    
+
 @app.get("/admin", response_class=HTMLResponse)
 def get_admin_page():
     file_path = TEMPLATES_DIR / "admin.html"
@@ -31,10 +31,8 @@ def get_user_page():
     with open(file_path, "r", encoding="utf-8") as f:
         return f.read()
 
-s
 @app.post("/api/chat")
 async def chat_endpoint(req: ChatRequest):
-    # 실제 노션 API를 호출하여 실시간 데이터베이스 정보를 가져옵니다.
+    # 실제 노션 API를 호출하여 실시간 정보를 가져옵니다.
     response_text = await fetch_notion_schedules(mode=req.mode)
     return {"response": response_text}
-
