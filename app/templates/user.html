@@ -48,9 +48,9 @@
 
     <div class="user-profile-card">
         <div class="profile-info">
-            <div class="avatar-circle">임</div>
+            <div class="avatar-circle" id="user-avatar">임</div>
             <div>
-                <h2>임혜량</h2>
+                <h2 id="user-display-name">임혜량</h2>
                 <p style="color: var(--text-sub); font-size: 13px;">(주)심스리얼리티 · AI 사용자</p>
             </div>
         </div>
@@ -109,9 +109,24 @@
     <script>
         let chartInstance = null;
 
+        // URL 경로에서 사용자 이름 추출 (예: /user/peterpan -> peterpan)
+        function getUsernameFromUrl() {
+            const pathSegments = window.location.pathname.split('/').filter(Boolean);
+            if (pathSegments.length >= 2) {
+                return decodeURIComponent(pathSegments[1]);
+            }
+            return "임혜량"; // 기본 사용자 이름
+        }
+
+        const username = getUsernameFromUrl();
+
+        // UI에 사용자 이름 적용
+        document.getElementById('user-display-name').innerText = username;
+        document.getElementById('user-avatar').innerText = username.charAt(0);
+
         async function fetchUserData() {
             try {
-                const res = await fetch('/api/tokens');
+                const res = await fetch(`/api/user/${encodeURIComponent(username)}/tokens`);
                 const data = await res.json();
 
                 document.getElementById('user-today').innerText = data.today_tokens.toLocaleString();
