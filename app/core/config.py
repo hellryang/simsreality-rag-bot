@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     notion_database_id: str | None = None
     notion_root_page_id: str | None = None
 
+    # --- Notion 쓰기 (수집과 키를 분리한다) ---------------------------
+    # 수집용 notion_api_key와 달리 이쪽은 쓰기 권한이 있는 Integration 키다.
+    # 봇이 노션에 일정을 등록할 때만 쓴다. 비우면 등록 기능이 꺼진다.
+    notion_privatespace_api: str | None = None
+    # 일정을 넣을 캘린더 DB. 이 값이 없으면 어디에 쓸지 알 수 없으므로
+    # 등록 기능이 동작하지 않는다.
+    notion_calendar_db_id: str | None = None
+
     anthropic_api_key: str
     anthropic_model: str = "claude-haiku-4-5-20251001"
 

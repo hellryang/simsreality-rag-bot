@@ -31,9 +31,8 @@ from fastapi.responses import HTMLResponse
 
 from app.core.config import settings
 from app.models.schemas import Answer
-from app.services import kakao_service, kakao_upload
+from app.services import claude_service, kakao_service, kakao_upload, notion_service
 from app.services.qa_pipeline import answer_question, format_answer
-from app.services.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -145,21 +144,12 @@ async def request_url(
     """
     _verify(token, x_callback_token)
     # 어느 버튼인지는 value로 온다. _button()이 value에 action_name을 넣어
-    # 두므로 여기서 "ask_question" / "submit_chat_log"가 그대로 잡힌다.
+    # 두므로 여기서 "ask_question" / "reserve_schedule"이 그대로 잡힌다.
     action_name = _dig(payload, "value", "action_name")
     logger.info("Request URL 호출: action=%s", action_name)
 
-    if action_name == kakao_service.BUTTON_CHAT_LOG:
-        return kakao_service.chat_log_modal()
-    if action_name == kakao_service.BUTTON_MANAGE:
-        # 모달을 여는 시점에도 react_user_id가 온다(실측). 그 사람이 이 방에서
-        # 저장한 글만 골라 Select에 채운다. 콜백엔 방 번호가 오므로 이름으로
-        # 바꿔 room_label(이름으로 저장돼 있음)과 맞춘다.
-        user_id = _dig(payload, "react_user_id", "message.user_id")
-        conversation_id = _dig(payload, "message.conversation_id", "conversation_id")
-        room = await kakao_service.get_room_name(conversation_id) if conversation_id else None
-        items = VectorStore().list_by_submitter(user_id, room_label=room) if user_id else []
-        return kakao_service.manage_docs_modal(items)
+    if action_name == kakao_service.BUTTON_RESERVE:
+        return kakao_service.reserve_modal()
     return kakao_service.question_modal()
 
 
@@ -198,24 +188,6 @@ async def callback_url(
     logger.info("Callback 수신: user=%s value=%s fields=%s", user_id, value, list(inputs))
     logger.debug("Callback 원본: %s", payload)
 
-    # 상세 메시지의 [삭제]/[수정] 버튼(submit_action)은 모달이 아니라 버튼
-    # 클릭이라 inputs가 없고 value가 실려 온다. 먼저 갈라낸다.
-    if value.startswith(kakao_service.ACTION_DELETE_PREFIX):
-        chunk_id = value[len(kakao_service.ACTION_DELETE_PREFIX):]
-        conversation_id = _dig(payload, "message.conversation_id", "conversation_id")
-        background_tasks.add_task(_handle_delete, user_id, chunk_id, conversation_id)
-        return {"status": "ok"}
-    if value.startswith(kakao_service.ACTION_EDIT_PREFIX):
-        # 수정은 아직 미구현. 카카오워크가 모달 기본값·모달 체이닝을 지원하지
-        # 않아, 기존 내용을 채워 보여주는 방식을 정하는 중이다(웹 리다이렉션
-        # 또는 카카오워크 문의 결과에 따라). 지금은 안내만 한다.
-        conversation_id = _dig(payload, "message.conversation_id", "conversation_id")
-        background_tasks.add_task(
-            _reply, user_id, conversation_id,
-            "수정 기능은 준비 중입니다. 지금은 삭제 후 다시 저장해 주세요.",
-        )
-        return {"status": "edit_pending"}
-
     if not inputs:
         # 모달을 거치지 않은 단순 버튼 클릭. 지금은 기록만 한다.
         return {"status": "ignored"}
@@ -225,19 +197,14 @@ async def callback_url(
         return {"status": "no_user"}
 
     question = inputs.get(kakao_service.FIELD_QUESTION, "").strip()
-    chat_log = inputs.get(kakao_service.FIELD_CHAT_LOG, "").strip()
-    select_index = inputs.get(kakao_service.FIELD_DELETE_TARGET, "").strip()
+    reserve_text = inputs.get(kakao_service.FIELD_RESERVE, "").strip()
 
     if question:
         background_tasks.add_task(_handle_question, user_id, question)
-    elif chat_log:
-        # 방은 message 안에 있다. 모달을 띄운 방을 그대로 room_label로 남긴다.
+    elif reserve_text:
+        # 등록 결과 DM이 실패하면 모달을 띄운 방으로 대신 보낸다.
         conversation_id = _dig(payload, "message.conversation_id", "conversation_id")
-        background_tasks.add_task(_handle_chat_log, user_id, chat_log, conversation_id)
-    elif select_index:
-        # 조회 모달에서 글을 골랐다. 상세 내용을 메시지로 보여준다(삭제 버튼 포함).
-        conversation_id = _dig(payload, "message.conversation_id", "conversation_id")
-        background_tasks.add_task(_handle_show_detail, user_id, select_index, conversation_id)
+        background_tasks.add_task(_handle_reserve, user_id, reserve_text, conversation_id)
     else:
         logger.warning("알 수 없는 입력: %s", list(inputs))
         return {"status": "unknown_input"}
@@ -271,7 +238,7 @@ async def _handle_plain_message(
 ) -> dict[str, str]:
     """봇을 호출한 메시지를 처리한다.
 
-        "메뉴" / "도움말"  → [질문하기]·[대화 정리 요청] 버튼 메뉴를 띄운다.
+        "메뉴" / "도움말"  → [질문하기]·[예약하기] 버튼 메뉴를 띄운다.
         "저장 <내용>"      → <내용>을 벡터 DB에 저장한다.
         그 외              → 무엇을 할 수 있는지 짧게 안내한다.
     """
@@ -296,14 +263,14 @@ async def _handle_plain_message(
     # 잡담마다 버튼이 쏟아지는 것을 막는다).
     await _reply_to_room(
         conversation_id,
-        "'메뉴'를 입력하면 질문하기·대화 정리 버튼을 띄웁니다. "
+        "'메뉴'를 입력하면 질문하기·예약하기 버튼을 띄웁니다. "
         "바로 저장하려면 '저장 <내용>'을 보내주세요.",
     )
     return {"status": "hint"}
 
 
 async def _show_menu(conversation_id: str) -> None:
-    """[질문하기]·[대화 정리 요청] 버튼이 담긴 업무 도우미 메뉴를 방에 보낸다."""
+    """[질문하기]·[예약하기] 버튼이 담긴 업무 도우미 메뉴를 방에 보낸다."""
     text, blocks = kakao_service.welcome_blocks()
     try:
         await kakao_service.send_message(conversation_id, text, blocks)
@@ -378,92 +345,82 @@ def _headline(text: str) -> str:
     return "제목 없음"
 
 
-async def _handle_chat_log(user_id: str, chat_log: str, conversation_id: str = "") -> None:
-    """모달에 넣은 내용을 KakaoWork 소스 문서로 적재한다.
+async def _handle_reserve(user_id: str, text: str, conversation_id: str = "") -> None:
+    """[예약하기] 모달에 적은 한 줄을 노션 캘린더에 등록한다.
 
-    사용자가 자기 발언을 직접 넣는 것을 전제로 한다. 그러면 제출자(모달을
-    낸 사람)가 곧 작성자이므로, xlsx 적재와 같은 형태(방·작성자·날짜·내용)로
-    저장할 수 있다. 작성자 이름은 users.info로 조회해 붙인다.
+    사용자는 "9월 15일 3시 킥오프 회의 본관 3층 대회의실"처럼 한 줄만 적는다.
+    거기서 이벤트명·날짜·시간·장소를 갈라내는 것은 Claude가 한다(Tool Use로
+    스키마를 고정해 받는다). 규칙 기반으로는 한국어 어순·조사 때문에 장소와
+    참석자를 가르기가 사실상 불가능하다.
+
+    결과는 성공이든 실패든 DM으로 알린다. 카카오워크는 모달을 연달아 띄울 수
+    없어 등록 전에 확인 화면을 만들 수 없기 때문이다. 대신 등록된 내용과
+    노션 링크를 보내 틀린 경우 노션에서 고치게 한다.
     """
-    stamped = kakao_service.now_kst()
-    sender = await kakao_service.get_user_name(user_id) if user_id else ""
-    # 방 번호 대신 이름(백석대 등)을 남긴다. 이름을 못 얻으면 번호를 쓴다.
-    room = await kakao_service.get_room_name(conversation_id) if conversation_id else ""
-    # 시각을 함께 넣어 제목이 겹치지 않게 한다. chunk_id가 제목에서 나오므로
-    # (schemas._build_chunk_id) 제목이 같으면 앞서 저장한 문서를 덮어쓴다.
-    title = f"카카오워크 대화: {_headline(chat_log)} ({stamped})"
-    document = kakao_service.build_document(
-        text=chat_log,
-        title=title,
-        created_at=stamped,
-        # sender(이름)는 출처 표시에, submitted_by(ID)는 "내 저장 관리"에서
-        # 본인 문서를 필터·삭제하는 데 쓴다. 이름은 동명이인 위험이 있어
-        # 필터에는 ID를 쓴다. 자기 발언 입력이 전제라 둘은 같은 사람을 가리킨다.
-        submitted_by=user_id,
-        room_label=room,
-        sender=sender,
-        msg_date=stamped,
-    )
+    today = kakao_service.now_kst()[:10]
+    lines = await _register_notion_events(text, today)
+    await _reply(user_id, conversation_id, "\n".join(lines))
+
+
+async def _register_notion_events(chat_log: str, today: str) -> list[str]:
+    """자유 문장에서 일정을 뽑아 노션 캘린더에 등록하고, 결과 문구를 돌려준다.
+
+    Args:
+        chat_log: 사용자가 모달에 적은 문장
+        today: 오늘 날짜(YYYY-MM-DD). "다음주 화요일" 계산 기준.
+
+    Returns:
+        사용자에게 보여줄 결과 줄 목록. 예외를 밖으로 던지지 않는다.
+        백그라운드 작업이라 여기서 터지면 사용자는 아무 응답도 못 받는다.
+
+    모델이 YYYY-MM-DD를 지키지 않는 경우가 있으므로 create_calendar_event가
+    형식을 한 번 더 검증한다. 형식이 틀린 건만 건너뛰고 나머지는 등록한다.
+    """
     try:
-        chunks = kakao_service.ingest_documents([document])
-        await kakao_service.reply_to_user(
-            user_id,
-            f"대화 내용을 저장했습니다. ({chunks}개 조각) 이제 검색됩니다.\n"
-            f"제목: {title}",
-        )
+        events = await claude_service.extract_schedule_events(chat_log, today)
     except Exception:
-        logger.exception("대화 내용 적재 실패 (user=%s)", user_id)
-        await kakao_service.reply_to_user(user_id, "저장에 실패했습니다.")
+        logger.exception("일정 추출 실패")
+        return ["등록에 실패했습니다. (일정을 읽어내지 못했습니다)"]
 
+    if not events:
+        return [
+            "일정을 알아보지 못했습니다.",
+            "날짜를 포함해서 다시 적어주세요. 예) 9월 15일 3시 킥오프 회의",
+        ]
 
-async def _handle_show_detail(user_id: str, select_index: str, conversation_id: str = "") -> None:
-    """조회 모달에서 고른 글의 상세를 메시지로 보여준다([삭제] 버튼 포함).
+    registered: list[str] = []
+    skipped: list[str] = []
 
-    select_index는 조회 모달이 보여준 목록의 순번이다. 모달을 열 때와 똑같이
-    (같은 사용자·같은 방) 목록을 다시 조회해 그 글을 찾는다.
-    """
-    store = VectorStore()
-    room = await kakao_service.get_room_name(conversation_id) if conversation_id else None
-    items = store.list_by_submitter(user_id, room_label=room)
-    try:
-        item = items[int(select_index)]
-    except (ValueError, IndexError):
-        await _reply(user_id, conversation_id, "글을 찾지 못했습니다.")
-        return
-
-    body, blocks = kakao_service.doc_detail_blocks(item)
-    if conversation_id:
+    for event in events:
         try:
-            await kakao_service.send_message(conversation_id, body, blocks)
-            return
-        except kakao_service.KakaoWorkError as exc:
-            logger.error("상세 표시 실패 (conv=%s): %s", conversation_id, exc)
-    # 방을 못 쓰면 최소한 텍스트로라도 알린다.
-    await _reply(user_id, conversation_id, body)
+            url = await notion_service.create_calendar_event(event)
+        except notion_service.NotionWriteError as exc:
+            logger.warning("노션 일정 등록 건너뜀: %s", exc)
+            skipped.append(f"{event.get('name', '(이름 없음)')} — {exc}")
+            continue
+        except Exception:
+            logger.exception("노션 일정 등록 실패")
+            skipped.append(f"{event.get('name', '(이름 없음)')} — 등록 중 오류")
+            continue
 
+        when = event.get("date", "")
+        time = event.get("time", "")
+        place = event.get("place", "")
+        detail = " / ".join(part for part in (when, time, place) if part)
+        registered.append(f" · {event.get('name', '')} / {detail}")
+        if url and len(registered) == 1:
+            # 링크는 하나만 붙인다. 여러 건이어도 같은 캘린더라 한 번이면 된다.
+            registered.append(f"   {url}")
 
-async def _handle_delete(user_id: str, chunk_id: str, conversation_id: str = "") -> None:
-    """상세 메시지의 [삭제] 버튼으로 고른 글을 삭제한다.
-
-    버튼 value에서 온 chunk_id가 정말 이 사용자의 것인지 다시 확인한 뒤
-    지운다(남의 글이 지워지지 않도록 방어).
-    """
-    store = VectorStore()
-    room = await kakao_service.get_room_name(conversation_id) if conversation_id else None
-    # 삭제하기 전에 그 글 내용을 확보해 둔다(삭제 후엔 못 읽으므로).
-    mine = {item["chunk_id"]: item for item in store.list_by_submitter(user_id, room_label=room)}
-    target = mine.get(chunk_id)
-    if target is None:
-        logger.warning("본인 글이 아니어서 삭제 거부: user=%s chunk=%s", user_id, chunk_id)
-        await _reply(user_id, conversation_id, "삭제할 글을 찾지 못했습니다.")
-        return
-
-    removed = store.delete_by_ids([chunk_id])
-    if removed:
-        preview = " ".join(target["text"].split())[:40]
-        await _reply(user_id, conversation_id, f"삭제했습니다:\n{preview}")
-    else:
-        await _reply(user_id, conversation_id, "삭제할 글을 찾지 못했습니다.")
+    lines: list[str] = []
+    if registered:
+        count = len([item for item in registered if item.startswith(" · ")])
+        lines.append(f"노션 캘린더에 {count}건을 등록했습니다.")
+        lines.extend(registered)
+    if skipped:
+        lines.append(f"등록하지 못한 일정 {len(skipped)}건:")
+        lines.extend(f" · {item}" for item in skipped)
+    return lines
 
 
 async def _reply(user_id: str, conversation_id: str, text: str) -> None:

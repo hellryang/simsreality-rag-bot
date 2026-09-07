@@ -57,21 +57,15 @@ ACTION_OPEN_BROWSER = "open_system_browser"
 
 # 모달 입력칸 이름. 콜백에서 이 이름으로 값을 찾는다.
 FIELD_QUESTION = "question"
-FIELD_CHAT_LOG = "chat_log"
-# "내 저장 관리" 모달에서 삭제할 문서를 고르는 Select 칸 이름.
-FIELD_DELETE_TARGET = "delete_target"
+# "예약하기" 모달에서 일정을 자유 문장으로 받는 칸 이름.
+FIELD_RESERVE = "reserve_text"
 
 # 버튼 식별자. 버튼의 action.value로 나갔다가 request_modal 페이로드의
 # value로 되돌아온다. 세 군데(버튼 생성·모달 응답·라우팅)에서 같은 값을
 # 써야 하므로 상수로 묶는다.
 BUTTON_ASK = "ask_question"
-BUTTON_CHAT_LOG = "submit_chat_log"
+BUTTON_RESERVE = "reserve_schedule"  # [예약하기] — 자유 문장 → 노션 캘린더
 BUTTON_UPLOAD = "upload_file"
-BUTTON_MANAGE = "manage_docs"  # [내 저장 조회] — 목록 Select 모달을 연다
-# 상세 메시지의 버튼. value에 "<동작>:<chunk_id>"를 실어 어떤 글에 대한
-# 무슨 동작인지 알린다. submit_action이라 누르면 콜백으로 value가 온다.
-ACTION_DELETE_PREFIX = "delete:"
-ACTION_EDIT_PREFIX = "edit:"
 
 
 class KakaoWorkError(RuntimeError):
@@ -345,8 +339,7 @@ def welcome_blocks(upload_url: str = "") -> tuple[str, list[dict[str, Any]]]:
     """
     buttons = [
         _button("질문하기", ACTION_CALL_MODAL, action_name=BUTTON_ASK, style="primary"),
-        _button("대화 정리 요청", ACTION_CALL_MODAL, action_name=BUTTON_CHAT_LOG),
-        _button("내 저장 조회", ACTION_CALL_MODAL, action_name=BUTTON_MANAGE),
+        _button("예약하기", ACTION_CALL_MODAL, action_name=BUTTON_RESERVE),
     ]
     body = (
         "무엇이든 물어보세요. Notion·Slack·KakaoWork에 쌓인 문서에서 찾아 "
@@ -394,129 +387,39 @@ def question_modal(value: str = BUTTON_ASK) -> dict[str, Any]:
     }
 
 
-def chat_log_modal(value: str = BUTTON_CHAT_LOG) -> dict[str, Any]:
-    """대화 내용을 붙여넣어 문서로 남기는 모달.
+def reserve_modal(value: str = BUTTON_RESERVE) -> dict[str, Any]:
+    """일정을 자유 문장으로 받아 노션 캘린더에 등록하는 모달.
 
-    봇이 채팅방을 읽을 수 없으므로, 남기고 싶은 대화는 사용자가 복사해
-    넣는다. 카카오워크에 대화 캡처·복사 기능이 있어 조작 자체는 간단하다.
+    칸을 하나만 두는 것이 핵심이다. 이벤트명·날짜·시간·장소를 따로 받으면
+    사용자 입장에서는 노션에서 직접 입력하는 편이 낫다(날짜 선택기도 있고
+    자동완성도 되니까). 봇이 이길 수 있는 지점은 **"대충 던진 한 줄을
+    기계가 정리해 주는 것"** 하나뿐이라, 입력을 한 줄로 받고 나머지는
+    Claude가 뽑아낸다.
+
+    카카오워크는 모달을 연달아 띄울 수 없어서 "이렇게 등록할까요?" 확인
+    화면을 만들 수 없다. 대신 등록한 뒤 결과와 노션 링크를 DM으로 보내
+    틀린 경우 노션에서 고치게 한다.
     """
     return {
         "view": {
-            "title": "대화 내용 저장",
-            "accept": "저장하기",
+            "title": "예약하기",
+            "accept": "등록하기",
             "decline": "취소",
             "value": value,
             "blocks": [
-                _label_block("저장할 대화 내용을 붙여넣어 주세요. 나중에 검색됩니다."),
+                _label_block(
+                    "등록할 일정을 한 줄로 적어주세요. "
+                    "날짜·시간·장소를 함께 적으면 그대로 반영됩니다."
+                ),
                 {
                     "type": "input",
-                    "name": FIELD_CHAT_LOG,
+                    "name": FIELD_RESERVE,
                     "required": True,
-                    "placeholder": "채팅방에서 복사한 대화 내용",
+                    "placeholder": "예) 9월 15일 3시 킥오프 회의 본관 3층 대회의실",
                 },
             ],
         }
     }
-
-
-# Select는 최대 30개까지. 그보다 많이 저장한 사람은 최근 것만 보여준다.
-MANAGE_LIST_LIMIT = 25
-
-
-def manage_docs_modal(items: list[dict[str, Any]], value: str = BUTTON_MANAGE) -> dict[str, Any]:
-    """내가 저장한 글 목록에서 하나를 고르는 모달(조회 1단계).
-
-    카카오워크는 모달→모달 연결이 안 되므로, 여기서 고른 글의 상세는 모달이
-    아니라 봇 메시지로 보여준다(내용 전체 + [삭제] 버튼). 그 편이 긴 내용도
-    잘리지 않아 오히려 낫다.
-
-    저장한 글이 없으면 Select 대신 안내만 보여준다(Select는 옵션이 비면
-    카카오워크가 거부한다).
-    """
-    if not items:
-        return {
-            "view": {
-                "title": "내 저장 조회",
-                "accept": "확인",
-                "decline": "닫기",
-                "value": value,
-                "blocks": [_label_block("이 방에 저장한 글이 아직 없습니다.")],
-            }
-        }
-
-    options = []
-    for i, item in enumerate(items[:MANAGE_LIST_LIMIT]):
-        # 목록 라벨: 내용 (날짜). 같은 방에서 저장한 것만 보여주므로 방 이름은
-        # 붙이지 않는다. 내용이 잘리지 않게 앞부분을 넉넉히 두고 날짜는 분까지만.
-        preview = " ".join(item["text"].split())[:40]
-        date = item.get("msg_date", "")[:16].replace("T", " ")
-        label = f"{preview} ({date})" if date else preview
-        # value에는 순번(문자열)만 넣는다. 카카오워크가 긴 value를 거부할 수
-        # 있어, 상세를 보여줄 때 순번으로 목록을 다시 조회해 그 글을 찾는다.
-        options.append({"text": label[:100], "value": str(i)})
-
-    return {
-        "view": {
-            "title": "내 저장 조회",
-            "accept": "내용 보기",
-            "decline": "취소",
-            "value": value,
-            "blocks": [
-                _label_block("내용을 볼 글을 선택하세요."),
-                {
-                    "type": "select",
-                    "name": FIELD_DELETE_TARGET,
-                    "required": True,
-                    "options": options,
-                    "placeholder": "글을 선택",
-                },
-            ],
-        }
-    }
-
-
-def doc_detail_blocks(item: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
-    """조회에서 고른 글의 상세를 보여주는 메시지(모달 아님).
-
-    모달→모달 연결이 안 되므로 상세는 봇 메시지로 보낸다. 메시지는 길이
-    제한이 덜해 내용 전체를 잘림 없이 보여줄 수 있고, [삭제] 버튼을 함께
-    붙일 수 있다. 버튼 value에 chunk_id를 실어 어떤 글을 지울지 알린다.
-    """
-    # 이름을 못 얻은 방은 room_label에 conversation_id(숫자)가 그대로 들어 있다.
-    # 숫자는 사용자에게 의미가 없으므로 방 표시를 생략한다.
-    room = item.get("room_label", "")
-    if room.isdigit():
-        room = ""
-    date = item.get("msg_date", "")[:16].replace("T", " ")
-    meta = " · ".join(part for part in (room, date, item.get("sender", "")) if part)
-
-    body = f"📄 저장된 글\n{meta}\n\n{item['text']}"
-    blocks = [
-        {"type": "header", "text": "저장된 글", "style": "blue"},
-        _text_block(f"{meta}\n\n{item['text']}"),
-        {"type": "divider"},
-        {
-            # 카카오워크는 action 블록에 버튼이 최소 2개 있어야 한다(실측).
-            "type": "action",
-            "elements": [
-                _button(
-                    "삭제",
-                    ACTION_SUBMIT,
-                    action_name="delete_doc",
-                    value=f"{ACTION_DELETE_PREFIX}{item['chunk_id']}",
-                    style="danger",
-                ),
-                _button(
-                    "수정",
-                    ACTION_SUBMIT,
-                    action_name="edit_doc",
-                    value=f"{ACTION_EDIT_PREFIX}{item['chunk_id']}",
-                    style="primary",
-                ),
-            ],
-        },
-    ]
-    return body, blocks
 
 
 # --- 수집 (사용자가 제출한 내용을 문서로) ----------------------------

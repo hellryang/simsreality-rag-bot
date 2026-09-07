@@ -13,10 +13,12 @@ ANTHROPIC_API_KEY가 없어도 "문서가 벡터 DB에 제대로 들어갔는지
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 from app.core.config import setup_cli_logging
 from app.models.schemas import Answer, SearchHit
 from app.services.claude_service import answer_with_citations
+from app.services.kakao_service import KST
 from app.services.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -55,10 +57,25 @@ async def answer_question(
     검색 결과가 비면 Claude를 아예 호출하지 않는다. 근거 없이 모델을 부르면
     그럴듯한 거짓말(환각)이 나오고 API 비용도 나가기 때문이다.
     """
-    hits = search_documents(question, top_k=top_k, persist_dir=persist_dir)
+    # 저장소가 통째로 비어 있으면 아직 준비가 안 된 상태다. 이때는
+    # 캘린더 도구도 켜지 않고 끊는다. build_db.py를 아직 안 돌린 환경(그리고
+    # API 키 없이 도는 테스트)에서 모델을 부르지 않기 위한 장치다.
+    store = VectorStore(persist_dir=persist_dir)
+    if store.count() == 0:
+        logger.warning("벡터 DB가 비어 있습니다. build_db.py를 먼저 실행하세요.")
+        return Answer.no_context()
+
+    hits = store.search(question, top_k=top_k)
     logger.info("질문 '%s' → 근거 조각 %d건", question, len(hits))
 
-    return await answer_with_citations(question, hits)
+    # 캘린더 조회 도구를 켠다. "다음주 빈 날"처럼 **벡터 DB에 근거가 있을 수
+    # 없는** 질문이 있어서, 이 질문에 걸린 조각이 없어도 모델을 부른다.
+    # (빈 날은 문서로 존재하지 않으므로 검색으로는 절대 안 나온다.)
+    # 오늘 날짜는 '다음주' 같은 상대 표현을 날짜로 바꾸는 데 쓰인다.
+    today = datetime.now(KST).date().isoformat()
+    return await answer_with_citations(
+        question, hits, allow_calendar=True, today=today
+    )
 
 
 def _clean(text: str, limit: int = 60) -> str:

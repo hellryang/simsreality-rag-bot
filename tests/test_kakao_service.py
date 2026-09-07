@@ -193,15 +193,20 @@ def test_question_modal_has_a_text_input():
     assert names == [kakao_service.FIELD_QUESTION]
 
 
-def test_chat_log_modal_has_a_text_input():
-    view = kakao_service.chat_log_modal()["view"]
+def test_reserve_modal_has_a_single_text_input():
+    """예약하기는 칸을 하나만 둔다.
+
+    필드를 여러 개로 나누면 사용자 입장에서는 노션에서 직접 입력하는 편이
+    낫다. 한 줄로 받아 Claude가 갈라내는 것이 이 기능의 존재 이유다.
+    """
+    view = kakao_service.reserve_modal()["view"]
     names = [b["name"] for b in view["blocks"] if b["type"] == "input"]
 
-    assert names == [kakao_service.FIELD_CHAT_LOG]
+    assert names == [kakao_service.FIELD_RESERVE]
 
 
 @pytest.mark.parametrize(
-    "build", [kakao_service.question_modal, kakao_service.chat_log_modal]
+    "build", [kakao_service.question_modal, kakao_service.reserve_modal]
 )
 def test_modals_carry_every_required_view_field(build):
     """필수 필드가 하나라도 빠지면 200을 돌려줘도 "모달 불러오기 실패"가 된다.
@@ -216,7 +221,7 @@ def test_modals_carry_every_required_view_field(build):
 
 
 @pytest.mark.parametrize(
-    "build", [kakao_service.question_modal, kakao_service.chat_log_modal]
+    "build", [kakao_service.question_modal, kakao_service.reserve_modal]
 )
 def test_modals_use_only_modal_blocks(build):
     """모달에는 label/input/select만 넣을 수 있다.
@@ -227,3 +232,15 @@ def test_modals_use_only_modal_blocks(build):
 
     assert blocks
     assert all(b["type"] in ("label", "input", "select") for b in blocks)
+
+
+def test_the_action_block_stays_within_the_button_limit():
+    """한 action 블록에 버튼은 2~3개까지다(카카오워크 제약).
+
+    업로드 URL이 있을 때가 버튼이 가장 많으므로 그 경우로 확인한다.
+    넘으면 메시지 발송 자체가 invalid_parameter로 거부된다.
+    """
+    _, blocks = kakao_service.welcome_blocks("https://example.com/kakao/upload?token=x")
+    buttons = [b for b in blocks if b["type"] == "action"][0]["elements"]
+
+    assert 2 <= len(buttons) <= 3, f"버튼이 {len(buttons)}개다"

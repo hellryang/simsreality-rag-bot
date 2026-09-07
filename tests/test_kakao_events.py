@@ -37,14 +37,14 @@ def handled(monkeypatch):
     async def fake_question(user_id, question):
         calls.append(("question", user_id, question))
 
-    async def fake_chat_log(user_id, chat_log, conversation_id=""):
-        calls.append(("chat_log", user_id, chat_log, conversation_id))
+    async def fake_reserve(user_id, text, conversation_id=""):
+        calls.append(("reserve", user_id, text, conversation_id))
 
     async def fake_upload(user_id, filename, text):
         calls.append(("upload", user_id, filename, text))
 
     monkeypatch.setattr(kakao_events, "_handle_question", fake_question)
-    monkeypatch.setattr(kakao_events, "_handle_chat_log", fake_chat_log)
+    monkeypatch.setattr(kakao_events, "_handle_reserve", fake_reserve)
     monkeypatch.setattr(kakao_events, "_ingest_upload", fake_upload)
     return calls
 
@@ -75,18 +75,15 @@ def test_request_url_returns_the_question_modal(client):
     ]
 
 
-def test_request_url_returns_the_chat_log_modal(client):
+def test_request_url_returns_the_reserve_modal(client):
     response = client.post(
-        "/kakao/request", json={"action_name": "submit_chat_log"}, headers=auth()
+        "/kakao/request", json={"action_name": "reserve_schedule"}, headers=auth()
     )
 
-    view = response.json()["view"]
-    assert [b["name"] for b in view["blocks"] if b["type"] == "input"] == [
-        kakao_service.FIELD_CHAT_LOG
+    names = [
+        b["name"] for b in response.json()["view"]["blocks"] if b["type"] == "input"
     ]
-
-
-# --- Callback URL ----------------------------------------------------
+    assert names == [kakao_service.FIELD_RESERVE]
 
 
 def test_callback_routes_a_question(client, handled):
@@ -103,19 +100,19 @@ def test_callback_routes_a_question(client, handled):
     assert handled == [("question", "user-42", "배포는 어디에 하나요")]
 
 
-def test_callback_routes_a_chat_log(client, handled):
+def test_callback_routes_a_reservation(client, handled):
     client.post(
         "/kakao/callback",
         json={
             "react_user_id": "user-7",
             "message": {"conversation_id": "room-9"},
-            "inputs": {kakao_service.FIELD_CHAT_LOG: {"value": "회의록 정리"}},
+            "inputs": {kakao_service.FIELD_RESERVE: {"value": "9월 15일 3시 킥오프"}},
         },
         headers=auth(),
     )
 
-    # 방(conversation_id)까지 함께 넘어가 room_label로 저장된다.
-    assert handled == [("chat_log", "user-7", "회의록 정리", "room-9")]
+    # 방(conversation_id)까지 넘어가야 DM이 실패했을 때 방으로 대신 보낼 수 있다.
+    assert handled == [("reserve", "user-7", "9월 15일 3시 킥오프", "room-9")]
 
 
 def test_callback_ignores_a_plain_button_click(client, handled):
@@ -310,3 +307,97 @@ def test_a_word_starting_with_save_is_not_a_command(client, stored):
 
     assert r.json()["status"] == "hint"
     assert stored == []
+
+
+# --- 노션 일정 등록 (대화 저장 모달의 "노션에 일정 등록" 선택) ---------
+#
+# 여기서 검증하는 것은 "실패해도 대화 저장을 망치지 않는가"다.
+# 벡터 DB 적재는 이미 끝난 뒤에 노션 등록이 일어나므로, 노션이 실패해도
+# 예외를 밖으로 던지면 안 된다. 던지면 사용자는 저장에 성공하고도
+# "저장 실패" 메시지를 받는다.
+
+
+async def test_no_events_found_is_reported_plainly(monkeypatch):
+    async def no_events(chat_log, today):
+        return []
+
+    monkeypatch.setattr(
+        kakao_events.claude_service, "extract_schedule_events", no_events
+    )
+
+    lines = await kakao_events._register_notion_events("잡담입니다", "2026-09-06")
+
+    # 왜 안 됐는지와 어떻게 다시 적어야 하는지를 같이 알려준다.
+    # 모달을 연달아 띄울 수 없어 되묻기가 불가능하므로 안내가 유일한 수단이다.
+    joined = " ".join(lines)
+    assert "알아보지 못했습니다" in joined
+    assert "날짜" in joined
+
+
+async def test_an_extraction_failure_does_not_raise(monkeypatch):
+    """Claude 호출이 터져도 예외가 밖으로 나가면 안 된다."""
+
+    async def boom(chat_log, today):
+        raise RuntimeError("Claude 죽음")
+
+    monkeypatch.setattr(kakao_events.claude_service, "extract_schedule_events", boom)
+
+    lines = await kakao_events._register_notion_events("내일 3시 회의", "2026-09-06")
+
+    assert any("실패" in line for line in lines)
+
+
+async def test_a_registered_event_is_reported_with_its_link(monkeypatch):
+    async def one_event(chat_log, today):
+        return [{"name": "킥오프 회의", "date": "2026-09-15", "time": "15:00"}]
+
+    async def fake_create(event, database_id=None):
+        return "https://notion.so/page-1"
+
+    monkeypatch.setattr(
+        kakao_events.claude_service, "extract_schedule_events", one_event
+    )
+    monkeypatch.setattr(
+        kakao_events.notion_service, "create_calendar_event", fake_create
+    )
+
+    lines = await kakao_events._register_notion_events("내일 3시 회의", "2026-09-06")
+    joined = "\n".join(lines)
+
+    assert "1건" in joined
+    assert "킥오프 회의" in joined
+    assert "2026-09-15" in joined
+    assert "https://notion.so/page-1" in joined
+
+
+async def test_a_partial_failure_reports_both_sides(monkeypatch):
+    """날짜가 이상한 건만 건너뛰고 나머지는 등록해야 한다.
+
+    한 건이 실패했다고 나머지를 버리면, 사용자는 왜 일부만 안 들어갔는지
+    모른 채 다시 전부 입력하게 된다.
+    """
+
+    async def two_events(chat_log, today):
+        return [
+            {"name": "킥오프", "date": "2026-09-15"},
+            {"name": "언젠가 회의", "date": "다음주쯤"},
+        ]
+
+    async def picky_create(event, database_id=None):
+        if event["date"] == "다음주쯤":
+            raise kakao_events.notion_service.NotionWriteError("날짜를 알아볼 수 없습니다")
+        return "https://notion.so/page-1"
+
+    monkeypatch.setattr(
+        kakao_events.claude_service, "extract_schedule_events", two_events
+    )
+    monkeypatch.setattr(
+        kakao_events.notion_service, "create_calendar_event", picky_create
+    )
+
+    lines = await kakao_events._register_notion_events("...", "2026-09-06")
+    joined = "\n".join(lines)
+
+    assert "킥오프" in joined
+    assert "언젠가 회의" in joined
+    assert "등록하지 못한" in joined
