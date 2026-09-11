@@ -20,11 +20,6 @@ logger = logging.getLogger(__name__)
 # 답변 하나에 이 정도면 충분하다. 너무 크게 잡으면 모델이 장황해지고 비용도 는다.
 MAX_TOKENS = 2000
 
-# 요약·인용처럼 사실을 옮기는 작업은 낮은 온도가 맞다. 높이면 없는 말을 지어낸다.
-# (temperature는 Haiku 4.5에서 사용 가능하다. Opus 4.7 이후 모델에서는 제거되었으므로
-#  상위 모델로 바꿀 때는 이 줄을 함께 확인해야 한다.)
-TEMPERATURE = 0.3
-
 _MAX_RETRY = 3
 
 
@@ -95,7 +90,6 @@ async def _create_message(system: str, user_content: str) -> str:
             response = await client.messages.create(
                 model=settings.anthropic_model,
                 max_tokens=MAX_TOKENS,
-                temperature=TEMPERATURE,
                 system=system,
                 messages=[{"role": "user", "content": user_content}],
             )
