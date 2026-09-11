@@ -31,8 +31,12 @@ class Settings(BaseSettings):
     anthropic_api_key: str
     anthropic_model: str = "claude-haiku-4-5-20251001"
 
-    slack_bot_token: str
-    slack_signing_secret: str
+    # Slack은 개발하지 않기로 했다(팀 결정). 필수로 두면 값이 없는 환경에서
+    # Settings() 생성 자체가 실패해 앱이 기동조차 못 한다. 배포 서버에 쓰지도
+    # 않는 키를 넣어야 하는 상황을 피하려고 선택값으로 둔다.
+    # 다시 개발하게 되면 슬랙 코드에서 값이 있는지 확인하고 쓰면 된다.
+    slack_bot_token: str | None = None
+    slack_signing_secret: str | None = None
     slack_app_token: str | None = None
 
     kakaowork_app_key: str
@@ -42,6 +46,16 @@ class Settings(BaseSettings):
     kakaowork_public_url: str = "http://localhost:8000"
 
     chroma_persist_dir: str = "./chroma_data"
+
+    # 질문하기에서 벡터 검색을 쓸지. 끄면 노션 캘린더 조회만으로 답한다.
+    #
+    # 끄는 것이 의미 있는 이유: 임베딩 모델(약 500MB)은 embedder._load_model()
+    # 에서 **처음 검색할 때** 올라간다(lru_cache). 검색을 한 번도 부르지
+    # 않으면 프로세스 메모리에 아예 올라오지 않아 배포가 크게 가벼워진다.
+    #
+    # 기본값은 True다. Slack 팀도 같은 파이프라인을 쓰므로 공용 동작을
+    # 바꾸지 않고, 끄고 싶은 환경만 .env에서 false로 둔다.
+    use_vector_search: bool = True
 
 
 settings = Settings()

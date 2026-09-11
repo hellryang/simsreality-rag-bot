@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Callable
 
 from notion_client import AsyncClient
@@ -167,12 +167,13 @@ async def collect_notion_documents(limit: int | None = None) -> list[dict[str, A
     try:
         while True:
             await asyncio.sleep(_REQUEST_INTERVAL_SEC)
-            # 참고: Notion API 버전에 따라 데이터 소스(data source) 단위 조회로
-            # 바뀔 수 있다. 아래 호출에서 400이 나면 설치된 notion-client 버전과
-            # https://developers.notion.com 의 Query a database 문서를 확인할 것.
+            # Notion API 2025-09-03부터 행 조회는 데이터 소스 단위다.
+            # notion-client 3.x에는 databases.query가 없다.
             response = await _with_backoff(
-                client.databases.query,
-                database_id=settings.notion_database_id,
+                client.data_sources.query,
+                data_source_id=await resolve_data_source_id(
+                    client, settings.notion_database_id
+                ),
                 page_size=100,
                 **({"start_cursor": cursor} if cursor else {}),
             )
@@ -477,6 +478,161 @@ async def create_calendar_event(
 
 
 
+# --- 기간 해석 -------------------------------------------------------
+#
+# "저번 주"가 며칠부터 며칠까지인지는 **모델에게 계산시키지 않는다.**
+# 실측에서 2026-09-09(수)에 "저번 주"를 물었더니 모델이 09-01~09-07을
+# 잡았다. 정답은 08-31~09-06이다. 시작도 끝도 하루씩 밀려서, 이번 주
+# 월요일이 결과에 섞이고 저번 주 월요일이 빠졌다.
+#
+# 그래서 모델은 "저번 주"라는 말을 `last_week`이라는 **라벨로 분류만** 하고,
+# 실제 날짜 계산은 여기서 한다. 분류는 모델이 잘하고, 날짜 산술은 못한다.
+# 명시적 날짜("9월 15일부터 20일")는 custom으로 그대로 받는다 - 그건
+# 계산이 아니라 옮겨 적기라 안전하다.
+
+# 한 주는 월요일에 시작한다(한국 관례). date.weekday()가 월=0이라 그대로 맞다.
+PERIOD_TODAY = "today"
+PERIOD_TOMORROW = "tomorrow"
+PERIOD_THIS_WEEK = "this_week"
+PERIOD_LAST_WEEK = "last_week"
+PERIOD_NEXT_WEEK = "next_week"
+PERIOD_THIS_MONTH = "this_month"
+PERIOD_NEXT_MONTH = "next_month"
+PERIOD_CUSTOM = "custom"
+
+PERIOD_LABELS = (
+    PERIOD_TODAY,
+    PERIOD_TOMORROW,
+    PERIOD_THIS_WEEK,
+    PERIOD_LAST_WEEK,
+    PERIOD_NEXT_WEEK,
+    PERIOD_THIS_MONTH,
+    PERIOD_NEXT_MONTH,
+    PERIOD_CUSTOM,
+)
+
+# 기간을 특정할 수 없을 때 볼 범위. "회의 가능한 날 알려줘"처럼 기간 언급이
+# 없는 질문에 쓴다. 오늘부터 2주면 일정 잡기에 대체로 충분하다.
+DEFAULT_LOOKAHEAD_DAYS = 13
+
+
+def _month_end(day: date) -> date:
+    """그 달의 마지막 날."""
+    if day.month == 12:
+        return date(day.year, 12, 31)
+    return date(day.year, day.month + 1, 1) - timedelta(days=1)
+
+
+def resolve_period(
+    period: str,
+    today: str,
+    start_date: str = "",
+    end_date: str = "",
+) -> tuple[str, str]:
+    """기간 라벨을 실제 날짜 범위로 바꾼다. 양끝을 포함한다.
+
+    Args:
+        period: PERIOD_LABELS 중 하나. 모르는 값이면 기본 범위를 쓴다.
+        today: 오늘 날짜(YYYY-MM-DD).
+        start_date, end_date: period가 custom일 때만 쓴다.
+
+    Returns:
+        (시작일, 종료일) 둘 다 YYYY-MM-DD.
+
+    Raises:
+        NotionWriteError: today가 형식에 맞지 않거나, custom인데 날짜가
+            올바르지 않을 때.
+    """
+    if not is_iso_date(today):
+        raise NotionWriteError(f"오늘 날짜가 올바르지 않습니다: {today}")
+
+    base = datetime.strptime(today, "%Y-%m-%d").date()
+    monday = base - timedelta(days=base.weekday())  # 이번 주 월요일
+
+    if period == PERIOD_CUSTOM:
+        if not is_iso_date(start_date) or not is_iso_date(end_date):
+            raise NotionWriteError(
+                f"조회 기간이 올바르지 않습니다: {start_date or '(없음)'} ~ "
+                f"{end_date or '(없음)'}"
+            )
+        if end_date < start_date:
+            start_date, end_date = end_date, start_date
+        return start_date, end_date
+
+    if period == PERIOD_TODAY:
+        return today, today
+    if period == PERIOD_TOMORROW:
+        tomorrow = (base + timedelta(days=1)).isoformat()
+        return tomorrow, tomorrow
+    if period == PERIOD_THIS_WEEK:
+        return monday.isoformat(), (monday + timedelta(days=6)).isoformat()
+    if period == PERIOD_LAST_WEEK:
+        last_monday = monday - timedelta(days=7)
+        return last_monday.isoformat(), (last_monday + timedelta(days=6)).isoformat()
+    if period == PERIOD_NEXT_WEEK:
+        next_monday = monday + timedelta(days=7)
+        return next_monday.isoformat(), (next_monday + timedelta(days=6)).isoformat()
+    if period == PERIOD_THIS_MONTH:
+        return base.replace(day=1).isoformat(), _month_end(base).isoformat()
+    if period == PERIOD_NEXT_MONTH:
+        first = _month_end(base) + timedelta(days=1)
+        return first.isoformat(), _month_end(first).isoformat()
+
+    # 모르는 라벨. 기간을 특정 못 한 것으로 보고 기본 범위를 쓴다.
+    logger.info("알 수 없는 기간 라벨(%s). 기본 범위를 사용합니다.", period)
+    return today, (base + timedelta(days=DEFAULT_LOOKAHEAD_DAYS)).isoformat()
+
+
+def is_past_range(end_date: str, today: str) -> bool:
+    """조회 범위가 통째로 지난 날인지.
+
+    "저번 주에 회의 가능한 날"처럼 이미 지난 기간을 묻는 경우가 있다.
+    답은 해주되, 지난 날이라는 사실을 함께 알려야 사용자가 헷갈리지 않는다.
+    """
+    return bool(end_date) and bool(today) and end_date < today
+
+
+# --- 데이터 소스 해석 ------------------------------------------------
+#
+# Notion API가 2025-09-03 버전에서 **데이터 소스(data source)** 개념을 도입했다.
+# 데이터베이스 하나가 여러 데이터 소스를 가질 수 있게 되면서, 행 조회가
+# `databases.query`에서 `data_sources.query`로 옮겨졌다.
+# notion-client 3.x에는 `databases.query`가 아예 없다(AttributeError).
+#
+# 그래서 DB id로 먼저 데이터 소스 id를 얻어야 한다. 이 매핑은 바뀌지 않으므로
+# 프로세스 안에서 한 번만 조회하고 캐시한다(질문마다 호출이 하나 늘면
+# Rate Limit에 그만큼 가까워진다).
+_DATA_SOURCE_IDS: dict[str, str] = {}
+
+
+async def resolve_data_source_id(client: AsyncClient, database_id: str) -> str:
+    """DB id로 그 안의 데이터 소스 id를 얻는다.
+
+    Raises:
+        NotionWriteError: 데이터 소스를 찾지 못했을 때(권한 없음 포함).
+    """
+    cached = _DATA_SOURCE_IDS.get(database_id)
+    if cached:
+        return cached
+
+    database = await _with_backoff(client.databases.retrieve, database_id=database_id)
+    sources = database.get("data_sources") or []
+    if not sources:
+        raise NotionWriteError(
+            "이 데이터베이스에서 데이터 소스를 찾지 못했습니다. "
+            "Integration이 대상 DB와 연결되어 있는지 확인하세요."
+        )
+    if len(sources) > 1:
+        # 우리 캘린더는 하나뿐이다. 여러 개가 되면 어느 것을 쓸지 정해야 한다.
+        logger.warning(
+            "데이터 소스가 %d개입니다. 첫 번째를 사용합니다: %s",
+            len(sources), [x.get("name") for x in sources],
+        )
+
+    _DATA_SOURCE_IDS[database_id] = sources[0]["id"]
+    return _DATA_SOURCE_IDS[database_id]
+
+
 # --- 캘린더 조회 (빈 날 찾기) ----------------------------------------
 #
 # 왜 벡터 DB가 아니라 노션을 직접 읽는가:
@@ -575,11 +731,13 @@ async def query_calendar_events(
     cursor: str | None = None
 
     try:
+        data_source_id = await resolve_data_source_id(client, db_id)
+
         while True:
             await asyncio.sleep(_REQUEST_INTERVAL_SEC)
             response = await _with_backoff(
-                client.databases.query,
-                database_id=db_id,
+                client.data_sources.query,
+                data_source_id=data_source_id,
                 filter=query_filter,
                 page_size=100,
                 **({"start_cursor": cursor} if cursor else {}),

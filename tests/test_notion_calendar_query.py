@@ -17,9 +17,14 @@ from app.core.config import settings
 from app.services.notion_service import (
     NotionWriteError,
     compute_free_days,
+    is_past_range,
     parse_calendar_page,
     query_calendar_events,
+    resolve_period,
 )
+
+# 2026-09-09은 수요일. 주 경계를 넘는 계산을 확인하기 좋은 기준일이다.
+TODAY = "2026-09-09"
 
 
 # --- 빈 날 계산 ------------------------------------------------------
@@ -161,3 +166,84 @@ async def test_querying_without_a_target_database_explains_why(monkeypatch):
 
     with pytest.raises(NotionWriteError, match="NOTION_CALENDAR_DB_ID"):
         await query_calendar_events("2026-09-14", "2026-09-18")
+
+
+# --- 기간 해석 -------------------------------------------------------
+#
+# 이 부분이 없던 동안 실제로 틀렸다. 2026-09-09(수)에 "저번 주"를 물었더니
+# 모델이 09-01~09-07을 잡아, 이번 주 월요일(09-07)이 답에 섞이고 저번 주
+# 월요일(08-31)이 빠졌다. 그래서 계산을 파이썬으로 가져왔다.
+
+
+def test_last_week_starts_on_the_previous_monday():
+    """실제로 났던 오류의 회귀 테스트.
+
+    수요일 기준으로 "저번 주"는 08-31(월)~09-06(일)이다.
+    09-07(이번 주 월요일)이 포함되면 안 된다.
+    """
+    assert resolve_period("last_week", TODAY) == ("2026-08-31", "2026-09-06")
+
+
+def test_this_week_runs_monday_to_sunday():
+    assert resolve_period("this_week", TODAY) == ("2026-09-07", "2026-09-13")
+
+
+def test_next_week_does_not_overlap_this_week():
+    this_start, this_end = resolve_period("this_week", TODAY)
+    next_start, next_end = resolve_period("next_week", TODAY)
+
+    assert next_start > this_end
+    assert (next_start, next_end) == ("2026-09-14", "2026-09-20")
+
+
+def test_today_and_tomorrow_are_single_days():
+    assert resolve_period("today", TODAY) == (TODAY, TODAY)
+    assert resolve_period("tomorrow", TODAY) == ("2026-09-10", "2026-09-10")
+
+
+def test_months_end_on_the_real_last_day():
+    assert resolve_period("this_month", TODAY) == ("2026-09-01", "2026-09-30")
+    assert resolve_period("next_month", TODAY) == ("2026-10-01", "2026-10-31")
+
+
+def test_next_month_crosses_the_year_boundary():
+    """12월의 다음 달은 이듬해 1월이다. month+1로 계산하면 터진다."""
+    assert resolve_period("next_month", "2026-12-15") == ("2027-01-01", "2027-01-31")
+
+
+def test_february_length_is_not_hardcoded():
+    assert resolve_period("this_month", "2028-02-10") == ("2028-02-01", "2028-02-29")
+
+
+def test_custom_takes_the_dates_as_given():
+    assert resolve_period("custom", TODAY, "2026-09-15", "2026-09-20") == (
+        "2026-09-15",
+        "2026-09-20",
+    )
+
+
+def test_a_reversed_custom_range_is_swapped_not_rejected():
+    """사용자가 거꾸로 말해도 빈 구간이 되어 조용히 0건이 나오면 안 된다."""
+    assert resolve_period("custom", TODAY, "2026-09-20", "2026-09-15") == (
+        "2026-09-15",
+        "2026-09-20",
+    )
+
+
+def test_custom_without_valid_dates_is_refused():
+    with pytest.raises(NotionWriteError, match="기간"):
+        resolve_period("custom", TODAY, "다음주", "")
+
+
+def test_an_unknown_label_falls_back_to_a_useful_window():
+    """모르는 라벨에 빈 결과를 주면 "일정 없음"으로 잘못 답한다."""
+    start, end = resolve_period("한참 뒤", TODAY)
+
+    assert start == TODAY
+    assert end > start
+
+
+def test_a_finished_range_is_flagged_as_past():
+    """지난 기간을 물으면 그 사실을 답변에 알려야 한다."""
+    assert is_past_range("2026-09-06", TODAY) is True
+    assert is_past_range("2026-09-20", TODAY) is False

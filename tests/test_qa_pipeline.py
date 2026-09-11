@@ -6,6 +6,7 @@
 """
 import pytest
 
+from app.core.config import settings
 from app.models.schemas import NO_CONTEXT_ANSWER, Answer, Chunk, Document, SearchHit
 
 DEPLOY_TEXT = (
@@ -37,13 +38,18 @@ def filled_store(tmp_path):
     return str(tmp_path)
 
 
-async def test_empty_store_skips_the_claude_call(tmp_path):
+async def test_empty_store_skips_the_claude_call(tmp_path, monkeypatch):
     """벡터 DB가 비어 있으면 Claude를 부르지 않는다.
 
     근거가 하나도 없는데 모델을 부르면 지어낸 답이 나오고 돈도 나간다.
     이 테스트가 통과한다는 것은 ANTHROPIC_API_KEY 없이도 이 경로가
     안전하게 끝난다는 뜻이다.
+
+    use_vector_search를 명시적으로 켜는 이유: 이 가드는 벡터 검색 경로의
+    것이다. 개발자마다 .env가 달라 테스트 결과가 갈리면 안 되므로
+    로컬 설정에 기대지 않고 여기서 못 박는다.
     """
+    monkeypatch.setattr(settings, "use_vector_search", True)
     from app.services.qa_pipeline import answer_question
 
     answer = await answer_question("배포 언제 하나요", persist_dir=str(tmp_path))
@@ -51,6 +57,38 @@ async def test_empty_store_skips_the_claude_call(tmp_path):
     assert isinstance(answer, Answer)
     assert answer.text == NO_CONTEXT_ANSWER
     assert answer.citations == []
+
+
+async def test_with_vector_search_off_the_store_is_never_touched(tmp_path, monkeypatch):
+    """벡터 검색을 끄면 VectorStore를 만들지도 않아야 한다.
+
+    만들기만 해도 ChromaDB 폴더가 생기고, search()를 부르면 임베딩 모델
+    (torch 포함 약 390MB)이 프로세스에 올라온다. 그 비용을 안 내는 것이
+    이 스위치의 요점이다.
+    """
+    monkeypatch.setattr(settings, "use_vector_search", False)
+
+    def explode(*args, **kwargs):
+        raise AssertionError("벡터 검색이 꺼져 있으면 VectorStore를 만들면 안 된다")
+
+    monkeypatch.setattr("app.services.qa_pipeline.VectorStore", explode)
+
+    called = {}
+
+    async def fake_answer(question, hits, **kwargs):
+        called["hits"] = hits
+        called["allow_calendar"] = kwargs.get("allow_calendar")
+        return Answer(text="답변", citations=[])
+
+    monkeypatch.setattr("app.services.qa_pipeline.answer_with_citations", fake_answer)
+
+    from app.services.qa_pipeline import answer_question
+
+    await answer_question("다음주 빈 날", persist_dir=str(tmp_path))
+
+    # 근거 조각은 비지만, 캘린더 도구는 켜져 있어야 답할 수 있다.
+    assert called["hits"] == []
+    assert called["allow_calendar"] is True
 
 
 def test_search_documents_returns_hits_without_claude(filled_store):

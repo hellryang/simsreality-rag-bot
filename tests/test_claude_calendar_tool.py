@@ -21,15 +21,24 @@ from app.services.claude_service import (
     build_system_prompt,
 )
 
+# 2026-09-09은 수요일. 주 경계를 넘는 계산을 확인하기 좋은 기준일이다.
+TODAY = "2026-09-09"
+
 
 # --- 도구 정의 -------------------------------------------------------
 
 
-def test_the_tool_requires_both_ends_of_the_range():
-    """기간의 한쪽만 받으면 빈 날을 계산할 수 없다."""
-    required = CALENDAR_TOOL["input_schema"]["required"]
+def test_the_tool_takes_a_period_label_not_computed_dates():
+    """모델은 라벨만 고르고, 날짜 계산은 파이썬이 한다.
 
-    assert set(required) == {"start_date", "end_date"}
+    실측에서 2026-09-09(수)에 "저번 주"를 물었더니 모델이 09-01~09-07을
+    잡았다(정답 08-31~09-06). 시작도 끝도 하루씩 밀려 이번 주 월요일이
+    섞이고 저번 주 월요일이 빠졌다. 그래서 날짜를 직접 받지 않는다.
+    """
+    schema = CALENDAR_TOOL["input_schema"]
+
+    assert schema["required"] == ["period"]
+    assert "last_week" in schema["properties"]["period"]["enum"]
 
 
 # --- 도구 실행 -------------------------------------------------------
@@ -50,9 +59,9 @@ async def test_the_tool_reports_events_and_free_days(monkeypatch):
 
     monkeypatch.setattr(notion_service, "query_calendar_events", fake_query)
 
-    result = await _run_calendar_tool(
-        {"start_date": "2026-09-14", "end_date": "2026-09-16"}
-    )
+    result = await _run_calendar_tool({"period": "custom",
+                                      "start_date": "2026-09-14",
+                                      "end_date": "2026-09-16"}, TODAY)
 
     assert "킥오프 회의" in result
     assert "2026-09-15" in result
@@ -69,9 +78,9 @@ async def test_a_fully_booked_range_says_so_explicitly(monkeypatch):
 
     monkeypatch.setattr(notion_service, "query_calendar_events", fake_query)
 
-    result = await _run_calendar_tool(
-        {"start_date": "2026-09-14", "end_date": "2026-09-16"}
-    )
+    result = await _run_calendar_tool({"period": "custom",
+                                      "start_date": "2026-09-14",
+                                      "end_date": "2026-09-16"}, TODAY)
 
     assert "없음" in result
 
@@ -82,9 +91,9 @@ async def test_a_notion_failure_becomes_text_not_an_exception(monkeypatch):
 
     monkeypatch.setattr(notion_service, "query_calendar_events", boom)
 
-    result = await _run_calendar_tool(
-        {"start_date": "2026-09-14", "end_date": "2026-09-16"}
-    )
+    result = await _run_calendar_tool({"period": "custom",
+                                      "start_date": "2026-09-14",
+                                      "end_date": "2026-09-16"}, TODAY)
 
     assert "조회 실패" in result
 
@@ -95,9 +104,9 @@ async def test_an_unexpected_error_also_becomes_text(monkeypatch):
 
     monkeypatch.setattr(notion_service, "query_calendar_events", boom)
 
-    result = await _run_calendar_tool(
-        {"start_date": "2026-09-14", "end_date": "2026-09-16"}
-    )
+    result = await _run_calendar_tool({"period": "custom",
+                                      "start_date": "2026-09-14",
+                                      "end_date": "2026-09-16"}, TODAY)
 
     assert "조회 실패" in result
 

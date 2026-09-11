@@ -73,6 +73,9 @@ def build_system_prompt(today: str = "") -> str:
         "일정 관련 규칙:\n"
         "5. 일정·회의·예약·빈 날에 대한 질문이면 lookup_calendar 도구로 "
         "노션 캘린더를 먼저 조회한다. 컨텍스트만 보고 추측하지 않는다.\n"
+        "5-1. 도구의 period에는 '저번 주'->last_week처럼 **라벨만** 고른다. "
+        "그 기간이 며칠부터 며칠까지인지는 직접 계산하지 않는다. "
+        "사용자가 날짜를 직접 말한 경우에만 custom을 쓴다.\n"
         "6. 도구가 돌려준 결과는 확인된 사실이므로 그대로 근거로 쓴다. "
         "이때는 출처 번호를 붙이지 않고, 규칙 3의 '근거 없음'에도 해당하지 않는다.\n"
         "7. 도구가 '일정이 없는 날'을 알려주면 그 목록을 그대로 전한다. "
@@ -183,22 +186,48 @@ CALENDAR_TOOL: dict = {
     "input_schema": {
         "type": "object",
         "properties": {
+            "period": {
+                "type": "string",
+                "enum": [
+                    "today",
+                    "tomorrow",
+                    "this_week",
+                    "last_week",
+                    "next_week",
+                    "this_month",
+                    "next_month",
+                    "custom",
+                ],
+                "description": (
+                    "조회할 기간. '오늘'→today, '내일'→tomorrow, "
+                    "'이번 주'→this_week, '저번 주'/'지난주'→last_week, "
+                    "'다음 주'→next_week, '이번 달'→this_month, "
+                    "'다음 달'→next_month. "
+                    "'9월 15일부터 20일까지'처럼 날짜를 직접 말한 경우에만 custom. "
+                    "기간 언급이 없으면 custom을 쓰지 말고 this_week을 쓴다. "
+                    "**날짜를 직접 계산하지 말고 라벨만 고른다.**"
+                ),
+            },
             "start_date": {
                 "type": "string",
-                "description": "조회 시작일. YYYY-MM-DD 형식.",
+                "description": "period가 custom일 때만. YYYY-MM-DD.",
             },
             "end_date": {
                 "type": "string",
-                "description": "조회 종료일(포함). YYYY-MM-DD 형식.",
+                "description": "period가 custom일 때만. YYYY-MM-DD(포함).",
             },
         },
-        "required": ["start_date", "end_date"],
+        "required": ["period"],
     },
 }
 
 
-async def _run_calendar_tool(tool_input: dict) -> str:
+async def _run_calendar_tool(tool_input: dict, today: str) -> str:
     """lookup_calendar 도구를 실제로 수행하고 결과를 문자열로 돌려준다.
+
+    기간 라벨을 실제 날짜로 바꾸는 것도, 빈 날을 계산하는 것도 파이썬이 한다.
+    모델에게 날짜 산술을 시키면 틀린다 - 실측에서 2026-09-09(수)에 "저번 주"를
+    물었더니 모델이 09-01~09-07을 잡았다(정답 08-31~09-06).
 
     모델에게 돌려줄 값이므로 실패해도 예외를 올리지 않는다. 예외를 올리면
     대화가 끊겨 사용자는 아무 답도 못 받는다. 실패 사유를 글로 적어 주면
@@ -206,8 +235,15 @@ async def _run_calendar_tool(tool_input: dict) -> str:
     """
     from app.services import notion_service
 
-    start = str(tool_input.get("start_date", "")).strip()
-    end = str(tool_input.get("end_date", "")).strip()
+    try:
+        start, end = notion_service.resolve_period(
+            str(tool_input.get("period", "")).strip(),
+            today,
+            str(tool_input.get("start_date", "")).strip(),
+            str(tool_input.get("end_date", "")).strip(),
+        )
+    except notion_service.NotionWriteError as exc:
+        return f"조회 실패: {exc}"
 
     try:
         events = await notion_service.query_calendar_events(start, end)
@@ -218,7 +254,13 @@ async def _run_calendar_tool(tool_input: dict) -> str:
         logger.exception("캘린더 조회 중 오류")
         return "조회 실패: 캘린더를 읽는 중 오류가 발생했습니다."
 
-    lines = [f"조회 기간: {start} ~ {end}", f"일정 {len(events)}건"]
+    lines = [f"조회 기간: {start} ~ {end} (오늘은 {today})"]
+    if notion_service.is_past_range(end, today):
+        # 사용자가 "저번 주에 회의 가능한 날"처럼 지난 기간을 묻는 일이 있다.
+        # 답은 하되 지난 날이라는 사실을 함께 알려야 헷갈리지 않는다.
+        lines.append("주의: 이 기간은 이미 지났다. 답변에서 그 점을 알릴 것.")
+
+    lines.append(f"일정 {len(events)}건")
     for event in events:
         when = event["date"]
         if event.get("end_date") and event["end_date"] != event["date"]:
@@ -239,7 +281,7 @@ async def _run_calendar_tool(tool_input: dict) -> str:
     return "\n".join(lines)
 
 
-async def _answer_with_tools(system: str, user_content: str) -> str:
+async def _answer_with_tools(system: str, user_content: str, today: str) -> str:
     """캘린더 도구를 쓸 수 있게 하고, 도구 호출이 끝날 때까지 이어서 부른다.
 
     Tool Use는 한 번에 끝나지 않는다. 모델이 도구를 쓰겠다고 하면(stop_reason
@@ -272,7 +314,7 @@ async def _answer_with_tools(system: str, user_content: str) -> str:
                 {
                     "type": "tool_result",
                     "tool_use_id": block.id,
-                    "content": await _run_calendar_tool(block.input),
+                    "content": await _run_calendar_tool(block.input, today),
                 }
             )
         messages.append({"role": "user", "content": results})
@@ -334,7 +376,7 @@ async def answer_with_citations(
 
     system = build_system_prompt(today)
     if allow_calendar:
-        text = await _answer_with_tools(system, user_content)
+        text = await _answer_with_tools(system, user_content, today)
     else:
         text = await _create_message(system, user_content)
 

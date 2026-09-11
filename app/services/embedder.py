@@ -14,9 +14,14 @@ from __future__ import annotations
 import logging
 from functools import lru_cache
 
-from sentence_transformers import SentenceTransformer
-
 from app.models.schemas import Chunk, Document
+
+# sentence_transformers는 최상단에서 import하지 않는다. import만으로 torch가
+# 딸려 올라와 프로세스 메모리가 약 390MB 늘어나기 때문이다(실측). 벡터 검색을
+# 쓰지 않는 배포(USE_VECTOR_SEARCH=false)에서는 그 비용을 낼 이유가 없다.
+# 실제 임베딩이 필요한 _load_model() 안에서만 불러온다.
+# 파일 상단의 `from __future__ import annotations` 덕에 타입 주석은 문자열로
+# 남으므로 import를 미뤄도 주석이 깨지지 않는다.
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +76,8 @@ def _load_model() -> SentenceTransformer:
     모델 파일이 약 500MB라 매번 새로 읽으면 몇 초씩 날아간다.
     처음 호출할 때만 내려받고, 그 뒤로는 캐시에서 바로 쓴다.
     """
+    from sentence_transformers import SentenceTransformer
+
     logger.info("임베딩 모델 로딩 중... (처음이면 약 500MB 내려받습니다)")
     model = SentenceTransformer(MODEL_NAME)
     # sentence-transformers 5.x에서 get_sentence_embedding_dimension이
