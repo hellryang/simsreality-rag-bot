@@ -4,7 +4,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(dotenv_path=BASE_DIR / ".env")
+PROJECT_ROOT = BASE_DIR.parent
+load_dotenv(dotenv_path=PROJECT_ROOT / ".env")
 
 # NOTION_TOKEN 또는 NOTION_API_KEY 로드
 NOTION_TOKEN = (os.getenv("NOTION_TOKEN") or os.getenv("NOTION_API_KEY") or "").strip()

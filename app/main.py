@@ -1,11 +1,14 @@
 from datetime import datetime
-from fastapi import FastAPI
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from pathlib import Path
 from backend.notion_service import fetch_notion_schedules
+from app.services.s3_service import upload_file_to_s3
+from app.api.kakao_events import router as kakao_router
 
 app = FastAPI()
+app.include_router(kakao_router)
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
@@ -85,6 +88,18 @@ async def get_specific_user_metrics(username: str):
 @app.get("/api/logs")
 async def get_user_logs():
     return {"logs": user_logs}
+
+
+@app.post("/api/files/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """업로드된 파일을 AWS S3에 저장한다."""
+    try:
+        return await upload_file_to_s3(file)
+    except ValueError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
 
 @app.post("/api/chat")
 async def chat_endpoint(req: ChatRequest):

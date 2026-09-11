@@ -47,6 +47,48 @@ uvicorn app.main:app --reload --port 8000
 
 ---
 
+## S3 파일 업로드
+
+`.env`에 `AWS_S3_BUCKET`과 `AWS_REGION`을 설정하면 다음 API로 파일을 S3에 저장할 수
+있습니다. AWS 자격 증명은 boto3의 기본 체인(환경변수, AWS 프로파일, IAM 역할)을
+사용하므로 키를 코드나 `.env.example`에 넣지 않습니다.
+
+```bash
+curl -X POST http://localhost:8000/api/files/upload \
+  -F "file=@./example.pdf"
+```
+
+응답의 `s3_uri`, `key`, `size`로 저장 위치와 업로드 결과를 확인할 수 있습니다.
+기본 최대 파일 크기는 10MB이며 `AWS_MAX_UPLOAD_SIZE_MB`로 조정합니다.
+
+---
+
+## 카카오워크 Webhook
+
+카카오워크에서 받은 업무 요청은 다음 순서로 처리됩니다.
+
+```text
+POST /kakao/webhook
+→ Claude 요약
+→ NOTION_ROOT_PAGE_ID 하위에 새 페이지 생성
+→ ChromaDB 저장
+→ {"text": "..."} 응답
+```
+
+카카오워크 관리자센터의 Webhook URL에는 다음 주소를 등록합니다.
+
+```text
+http://EC2퍼블릭IP:8000/kakao/webhook
+```
+
+현재 수신 코드는 `text`, `utterance`, `message.text` 형태의 메시지 필드를 지원합니다.
+관리자센터에서 전달하는 실제 이벤트 JSON이 다른 경우
+`app/services/kakao_service.py`의 `extract_message()`에 해당 필드를 추가해야 합니다.
+Notion Integration에는 루트 페이지 공유 권한이 있어야 하며, `NOTION_ROOT_PAGE_ID`는
+데이터베이스 ID가 아닌 페이지 ID여야 합니다.
+
+---
+
 ## 폴더 구조
 
 ```

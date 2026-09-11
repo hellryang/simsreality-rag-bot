@@ -165,3 +165,13 @@ async def answer_with_citations(question: str, hits: list[SearchHit]) -> Answer:
         return Answer.no_context()
 
     return Answer(text=text, citations=citations)
+
+
+async def summarize_work_request(request: str) -> str:
+    """카카오워크 업무 요청을 Notion에 저장할 요약문으로 정리한다."""
+    system = (
+        "너는 업무 기록 정리 도우미다. 사용자가 보낸 업무 요청만 근거로 "
+        "제목과 요약을 한국어로 작성한다. 없는 일정·담당자·기한은 만들지 않는다. "
+        "다음 형식을 지킨다.\n제목: ...\n요약: ..."
+    )
+    return await _create_message(system, request)

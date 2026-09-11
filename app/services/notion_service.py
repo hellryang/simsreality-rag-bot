@@ -298,6 +298,38 @@ async def collect_notion_documents(limit: int | None = None) -> list[dict[str, A
     return documents
 
 
+async def create_work_request_page(title: str, body: str) -> str:
+    """업무 요청을 루트 Notion 페이지 아래에 새 페이지로 저장한다."""
+    if not settings.notion_root_page_id:
+        raise RuntimeError("NOTION_ROOT_PAGE_ID가 설정되지 않았습니다.")
+
+    client = AsyncClient(auth=settings.notion_api_key)
+    try:
+        response = await _with_backoff(
+            client.pages.create,
+            parent={"page_id": settings.notion_root_page_id},
+            properties={
+                "title": {
+                    "title": [{"text": {"content": title[:200]}}],
+                }
+            },
+            children=[
+                {
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": {
+                        "rich_text": [
+                            {"type": "text", "text": {"content": body[:2000]}}
+                        ]
+                    },
+                }
+            ],
+        )
+        return response.get("url", "")
+    finally:
+        await client.aclose()
+
+
 async def _build_document(
     client: AsyncClient, page_id: str, title: str
 ) -> dict[str, Any] | None:

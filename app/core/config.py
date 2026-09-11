@@ -24,8 +24,15 @@ class Settings(BaseSettings):
     slack_app_token: str | None = None
 
     kakaowork_app_key: str
+    kakaowork_webhook_secret: str | None = None
 
     chroma_persist_dir: str = "./chroma_data"
+
+    # boto3는 환경변수, AWS 프로파일, IAM 역할 순서로 자격 증명을 찾는다.
+    aws_region: str = "ap-northeast-2"
+    aws_s3_bucket: str | None = None
+    aws_s3_prefix: str = "uploads"
+    aws_max_upload_size_mb: int = 10
 
 
 settings = Settings()
