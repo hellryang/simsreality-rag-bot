@@ -242,6 +242,35 @@ async def _fetch_page_text(client: AsyncClient, page_id: str) -> str:
     return "\n".join(await _collect_block_lines(client, page_id))
 
 
+async def _query_database(
+    client: AsyncClient, database_id: str, **kwargs: Any
+) -> dict[str, Any]:
+    """Notion SDK 버전에 맞는 데이터베이스 조회 메서드를 호출한다."""
+    databases = getattr(client, "databases", None)
+    query = getattr(databases, "query", None)
+    if query is not None:
+        return await _with_backoff(query, database_id=database_id, **kwargs)
+
+    data_sources = getattr(client, "data_sources", None)
+    query_data_source = getattr(data_sources, "query", None)
+    if query_data_source is None:
+        raise RuntimeError("설치된 notion-client가 데이터베이스 조회를 지원하지 않습니다.")
+
+    database = await _with_backoff(
+        client.databases.retrieve, database_id=database_id
+    )
+    data_source_list = database.get("data_sources", [])
+    if not data_source_list:
+        raise RuntimeError("Notion DB에서 조회할 데이터 소스를 찾지 못했습니다.")
+
+    data_source_id = data_source_list[0].get("id")
+    if not data_source_id:
+        raise RuntimeError("Notion 데이터 소스 ID가 비어 있습니다.")
+    return await _with_backoff(
+        query_data_source, data_source_id=data_source_id, **kwargs
+    )
+
+
 async def collect_notion_documents(limit: int | None = None) -> list[dict[str, Any]]:
     """Notion 데이터베이스의 페이지를 수집한다.
 
@@ -259,12 +288,10 @@ async def collect_notion_documents(limit: int | None = None) -> list[dict[str, A
     try:
         while True:
             await asyncio.sleep(_REQUEST_INTERVAL_SEC)
-            # 참고: Notion API 버전에 따라 데이터 소스(data source) 단위 조회로
-            # 바뀔 수 있다. 아래 호출에서 400이 나면 설치된 notion-client 버전과
-            # https://developers.notion.com 의 Query a database 문서를 확인할 것.
             response = await _with_backoff(
-                client.databases.query,
-                database_id=settings.notion_database_id,
+                _query_database,
+                client,
+                settings.notion_database_id,
                 page_size=100,
                 **({"start_cursor": cursor} if cursor else {}),
             )
@@ -391,9 +418,9 @@ async def search_calendar_events(query: str = "") -> list[Chunk]:
 
     client = AsyncClient(auth=settings.notion_api_key)
     try:
-        response = await _with_backoff(
-            client.databases.query,
-            database_id=settings.notion_database_id,
+        response = await _query_database(
+            client,
+            settings.notion_database_id,
             page_size=100,
         )
         chunks: list[Chunk] = []
