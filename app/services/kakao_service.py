@@ -5,10 +5,16 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from app.models.schemas import Chunk, Document
-from app.services.claude_service import summarize_work_request
+from app.models.schemas import Document, SearchHit
+from app.services.claude_service import extract_calendar_event, summarize_work_request
+from app.services.claude_service import answer_with_citations
 from app.services.embedder import chunk_document
-from app.services.notion_service import create_work_request_page
+from app.services.notion_service import (
+    create_calendar_event,
+    create_work_request_page,
+    search_calendar_events,
+)
+from app.services.qa_pipeline import search_documents
 from app.services.vector_store import VectorStore
 
 
@@ -36,14 +42,38 @@ def extract_message(payload: dict[str, Any]) -> tuple[str, str]:
 
 
 async def handle_message(payload: dict[str, Any]) -> dict[str, str]:
-    """요청을 요약하고 Notion과 ChromaDB에 저장한다."""
+    """등록 요청은 저장하고 조회 질문은 Notion·ChromaDB에서 답변한다."""
     text, user_id = extract_message(payload)
     if not text:
         raise ValueError("카카오워크 메시지 본문을 찾을 수 없습니다.")
 
-    summary = await summarize_work_request(text)
-    title = f"카카오워크 업무 요청 - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}"
-    notion_url = await create_work_request_page(title, f"요청자: {user_id}\n\n{summary}")
+    is_query = any(
+        keyword in text
+        for keyword in ("누구", "언제", "몇 시", "있어", "알려", "조회", "찾아")
+    )
+    is_calendar_request = any(keyword in text for keyword in ("회의", "일정", "미팅"))
+
+    if is_query:
+        notion_chunks = await search_calendar_events()
+        chroma_hits = search_documents(text)
+        notion_hits = [SearchHit(chunk=chunk, score=1.0) for chunk in notion_chunks]
+        answer = await answer_with_citations(text, notion_hits + chroma_hits)
+        return {"text": answer.text, "notion_url": ""}
+
+    if is_calendar_request:
+        event = await extract_calendar_event(text)
+        notion_url = await create_calendar_event(event)
+        title = event["title"]
+        summary = (
+            f"제목: {event['title']}\n"
+            f"날짜: {event['date']}"
+            f"{f' {event['time']}' if event['time'] else ''}\n"
+            f"참석자: {event['attendees'] or '없음'}"
+        )
+    else:
+        summary = await summarize_work_request(text)
+        title = f"카카오워크 업무 요청 - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}"
+        notion_url = await create_work_request_page(title, f"요청자: {user_id}\n\n{summary}")
 
     document = Document(
         text=f"{title}\n요청자: {user_id}\n{summary}",
