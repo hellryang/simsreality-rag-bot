@@ -412,50 +412,21 @@ async def create_calendar_event(event: dict[str, str]) -> str:
 
 
 async def search_calendar_events(query: str = "") -> list[Chunk]:
-    """캘린더 DB의 기존 일정을 검색 가능한 Chunk 목록으로 변환한다."""
-    if not settings.notion_database_id:
-        raise RuntimeError("NOTION_DATABASE_ID가 설정되지 않았습니다.")
+    """루트 페이지 아래의 Notion 페이지를 검색 가능한 Chunk로 변환한다."""
+    if not settings.notion_root_page_id:
+        raise RuntimeError("NOTION_ROOT_PAGE_ID가 설정되지 않았습니다.")
 
-    client = AsyncClient(auth=settings.notion_api_key)
-    try:
-        response = await _query_database(
-            client,
-            settings.notion_database_id,
-            page_size=100,
-        )
-        chunks: list[Chunk] = []
-        for page in response.get("results", []):
-            properties = page.get("properties", {})
-            title = ""
-            date = ""
-            details: list[str] = []
-            for prop in properties.values():
-                prop_type = prop.get("type")
-                if prop_type == "title":
-                    title = _extract_plain_text(prop.get("title", []))
-                elif prop_type == "date":
-                    date_value = prop.get("date") or {}
-                    date = date_value.get("start", "")
-                elif prop_type == "rich_text":
-                    value = _extract_plain_text(prop.get("rich_text", []))
-                    if value:
-                        details.append(value)
-            text = "\n".join(
-                value for value in (title, f"날짜: {date}" if date else "", *details) if value
-            )
-            if not text or (query and query not in text):
-                continue
-            document = Document(
-                text=text,
-                source="notion",
-                url=page.get("url", ""),
-                title=title or "Notion 일정",
-                created_at=page.get("created_time", ""),
-            )
-            chunks.extend(chunk_document(document))
-        return chunks
-    finally:
-        await client.aclose()
+    documents = await collect_notion_page_tree(
+        settings.notion_root_page_id,
+        max_depth=3,
+        include_root=True,
+    )
+    chunks: list[Chunk] = []
+    for item in documents:
+        if query and query not in item["text"]:
+            continue
+        chunks.extend(chunk_document(Document.model_validate(item)))
+    return chunks
 
 
 async def _build_document(
