@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from functools import lru_cache
 
@@ -169,3 +170,25 @@ async def summarize_work_request(request: str) -> str:
         "다음 형식을 지킨다.\n제목: ...\n요약: ..."
     )
     return await _create_message(system, request)
+
+
+async def extract_calendar_event(request: str) -> dict[str, str]:
+    """자연어 업무 요청에서 캘린더 등록에 필요한 값을 추출한다."""
+    system = (
+        "너는 일정 추출기다. 사용자 문장에서 일정 제목, 날짜(YYYY-MM-DD), "
+        "참석자, 메모를 추출해 JSON 객체 하나로만 답한다. "
+        "시간이 없으면 time은 빈 문자열로 둔다. 연도가 없으면 현재 연도 2026을 사용한다. "
+        '형식: {"title":"","date":"","time":"","attendees":"","notes":""}'
+    )
+    raw = await _create_message(system, request)
+    try:
+        parsed = json.loads(raw.strip().strip("`").removeprefix("json").strip())
+    except json.JSONDecodeError as exc:
+        raise ValueError("Claude가 일정 JSON을 반환하지 않았습니다.") from exc
+
+    required = ("title", "date", "time", "attendees", "notes")
+    if any(not isinstance(parsed.get(key, ""), str) for key in required):
+        raise ValueError("일정 추출 결과의 형식이 올바르지 않습니다.")
+    if not parsed["title"] or not parsed["date"]:
+        raise ValueError("일정 제목 또는 날짜를 추출하지 못했습니다.")
+    return {key: parsed.get(key, "").strip() for key in required}

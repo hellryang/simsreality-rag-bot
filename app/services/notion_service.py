@@ -17,7 +17,9 @@ from notion_client import AsyncClient
 from notion_client.errors import APIResponseError
 
 from app.core.config import settings
+from app.models.schemas import Chunk, Document
 from app.core.security import scrub_pii
+from app.services.embedder import chunk_document
 
 logger = logging.getLogger(__name__)
 
@@ -326,6 +328,105 @@ async def create_work_request_page(title: str, body: str) -> str:
             ],
         )
         return response.get("url", "")
+    finally:
+        await client.aclose()
+
+
+async def create_calendar_event(event: dict[str, str]) -> str:
+    """Notion 캘린더 데이터베이스에 일정 한 건을 추가한다."""
+    if not settings.notion_database_id:
+        raise RuntimeError("NOTION_DATABASE_ID가 설정되지 않았습니다.")
+
+    client = AsyncClient(auth=settings.notion_api_key)
+    try:
+        database = await _with_backoff(
+            client.databases.retrieve, database_id=settings.notion_database_id
+        )
+        properties = database.get("properties", {})
+        title_name = next(
+            (name for name, prop in properties.items() if prop.get("type") == "title"),
+            None,
+        )
+        date_name = next(
+            (name for name, prop in properties.items() if prop.get("type") == "date"),
+            None,
+        )
+        if not title_name or not date_name:
+            raise RuntimeError("Notion DB에 title과 date 속성이 필요합니다.")
+
+        title_property: dict[str, Any] = {
+            title_name: {"title": [{"text": {"content": event["title"][:200]}}]},
+            date_name: {"date": {"start": event["date"]}},
+        }
+        details = "\n".join(
+            value for value in (
+                f"시간: {event['time']}" if event["time"] else "",
+                f"참석자: {event['attendees']}" if event["attendees"] else "",
+                f"메모: {event['notes']}" if event["notes"] else "",
+            ) if value
+        )
+        rich_text_name = next(
+            (name for name, prop in properties.items() if prop.get("type") == "rich_text"),
+            None,
+        )
+        if details and rich_text_name:
+            title_property[rich_text_name] = {
+                "rich_text": [{"text": {"content": details[:2000]}}]
+            }
+
+        response = await _with_backoff(
+            client.pages.create,
+            parent={"database_id": settings.notion_database_id},
+            properties=title_property,
+        )
+        return response.get("url", "")
+    finally:
+        await client.aclose()
+
+
+async def search_calendar_events(query: str = "") -> list[Chunk]:
+    """캘린더 DB의 기존 일정을 검색 가능한 Chunk 목록으로 변환한다."""
+    if not settings.notion_database_id:
+        raise RuntimeError("NOTION_DATABASE_ID가 설정되지 않았습니다.")
+
+    client = AsyncClient(auth=settings.notion_api_key)
+    try:
+        response = await _with_backoff(
+            client.databases.query,
+            database_id=settings.notion_database_id,
+            page_size=100,
+        )
+        chunks: list[Chunk] = []
+        for page in response.get("results", []):
+            properties = page.get("properties", {})
+            title = ""
+            date = ""
+            details: list[str] = []
+            for prop in properties.values():
+                prop_type = prop.get("type")
+                if prop_type == "title":
+                    title = _extract_plain_text(prop.get("title", []))
+                elif prop_type == "date":
+                    date_value = prop.get("date") or {}
+                    date = date_value.get("start", "")
+                elif prop_type == "rich_text":
+                    value = _extract_plain_text(prop.get("rich_text", []))
+                    if value:
+                        details.append(value)
+            text = "\n".join(
+                value for value in (title, f"날짜: {date}" if date else "", *details) if value
+            )
+            if not text or (query and query not in text):
+                continue
+            document = Document(
+                text=text,
+                source="notion",
+                url=page.get("url", ""),
+                title=title or "Notion 일정",
+                created_at=page.get("created_time", ""),
+            )
+            chunks.extend(chunk_document(document))
+        return chunks
     finally:
         await client.aclose()
 

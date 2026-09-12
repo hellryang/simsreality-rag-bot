@@ -87,6 +87,10 @@ http://EC2퍼블릭IP:8000/kakao/webhook
 Notion Integration에는 루트 페이지 공유 권한이 있어야 하며, `NOTION_ROOT_PAGE_ID`는
 데이터베이스 ID가 아닌 페이지 ID여야 합니다.
 
+메시지에 `회의`, `일정`, `미팅`이 포함되면 `NOTION_DATABASE_ID`에 지정한 Notion
+데이터베이스에 캘린더 일정으로 등록합니다. 해당 DB에는 최소한 `title` 타입 속성과
+`date` 타입 속성이 하나씩 있어야 합니다. 날짜가 없는 요청은 일정으로 등록되지 않습니다.
+
 ---
 
 ## 폴더 구조
