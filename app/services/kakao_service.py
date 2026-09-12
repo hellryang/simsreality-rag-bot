@@ -5,15 +5,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from app.models.schemas import Document, SearchHit
+from app.models.schemas import Document
 from app.services.claude_service import extract_calendar_event, summarize_work_request
 from app.services.claude_service import answer_with_citations
 from app.services.embedder import chunk_document
-from app.services.notion_service import (
-    create_calendar_event,
-    create_work_request_page,
-    search_calendar_events,
-)
+from app.services.notion_service import create_calendar_event, create_work_request_page
 from app.services.qa_pipeline import search_documents
 from app.services.vector_store import VectorStore
 
@@ -54,10 +50,8 @@ async def handle_message(payload: dict[str, Any]) -> dict[str, str]:
     is_calendar_request = any(keyword in text for keyword in ("회의", "일정", "미팅"))
 
     if is_query:
-        notion_chunks = await search_calendar_events()
         chroma_hits = search_documents(text)
-        notion_hits = [SearchHit(chunk=chunk, score=1.0) for chunk in notion_chunks]
-        answer = await answer_with_citations(text, notion_hits + chroma_hits)
+        answer = await answer_with_citations(text, chroma_hits)
         return {"text": answer.text, "notion_url": ""}
 
     if is_calendar_request:

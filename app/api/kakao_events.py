@@ -10,10 +10,14 @@ router = APIRouter(prefix="/kakao", tags=["kakaowork"])
 
 
 @router.post("/webhook")
-async def kakao_webhook(request: Request) -> dict[str, str]:
-    """카카오워크가 보낸 업무 요청을 저장하고 답변 형식으로 반환한다."""
+async def kakao_webhook(request: Request) -> dict[str, Any]:
+    """카카오워크 Callback에 BlockKit 응답을 반환한다."""
     payload: dict[str, Any] = await request.json()
     try:
-        return await handle_message(payload)
+        result = await handle_message(payload)
+        return {
+            "text": result["text"],
+            "blocks": [{"type": "text", "text": result["text"]}],
+        }
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
