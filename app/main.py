@@ -12,9 +12,25 @@ try:
     sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
 except ModuleNotFoundError:
     pass
+import logging
+
 from fastapi import FastAPI
 
 from app.api import health, kakao_events, slack_events
+
+# uvicorn 은 자기 로거만 설정하고 앱 로거(app.*)는 손대지 않는다. 그래서
+# 배포 환경의 journalctl 에 접근 기록만 찍히고 우리 logger.info 는 사라진다.
+# "요청이 도달했는가", "어느 버튼이 눌렸는가", "캘린더를 조회했는가"를
+# 구분할 수 없어 진단이 막힌다. 배포에서는 로그가 유일한 관찰 수단이다.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s %(name)s: %(message)s",
+    force=True,  # uvicorn 이 먼저 설정했더라도 덮어쓴다
+)
+
+# 라이브러리가 수십 줄씩 쏟아내면 정작 볼 것이 묻힌다.
+for _noisy in ("httpx", "httpcore", "anthropic", "urllib3", "chromadb"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 app = FastAPI(title="AI 업무협업 플랫폼 연동 및 자동화 서비스")
 
