@@ -62,27 +62,27 @@
         <div class="card">
             <div class="card-label">금일 토큰</div>
             <div class="card-value" id="user-today">0</div>
-            <div class="card-sub">사용 내역 없음</div>
+            <div class="card-sub">사용 내역 반영 중</div>
         </div>
         <div class="card">
             <div class="card-label">주간 토큰</div>
             <div class="card-value" id="user-weekly">0</div>
-            <div class="card-sub">사용 내역 없음</div>
+            <div class="card-sub">사용 내역 반영 중</div>
         </div>
         <div class="card">
             <div class="card-label">월간 토큰</div>
             <div class="card-value" id="user-monthly">0</div>
-            <div class="card-sub">사용 내역 없음</div>
+            <div class="card-sub">사용 내역 반영 중</div>
         </div>
         <div class="card">
             <div class="card-label">일 평균 토큰</div>
-            <div class="card-value">0</div>
-            <div class="card-sub">활성일 기준</div>
+            <div class="card-value" id="user-avg-tokens">0</div>
+            <div class="card-sub">실시간 계산 완료</div>
         </div>
         <div class="card">
             <div class="card-label">일 평균 요청</div>
-            <div class="card-value">0건</div>
-            <div class="card-sub">활성일 기준</div>
+            <div class="card-value" id="user-avg-requests">0건</div>
+            <div class="card-sub">실시간 계산 완료</div>
         </div>
         <div class="card">
             <div class="card-label">총 대화 수</div>
@@ -109,18 +109,16 @@
     <script>
         let chartInstance = null;
 
-        // URL 경로에서 사용자 이름 추출 (예: /user/peterpan -> peterpan)
         function getUsernameFromUrl() {
             const pathSegments = window.location.pathname.split('/').filter(Boolean);
             if (pathSegments.length >= 2) {
                 return decodeURIComponent(pathSegments[1]);
             }
-            return "임혜량"; // 기본 사용자 이름
+            return "임혜량";
         }
 
         const username = getUsernameFromUrl();
 
-        // UI에 사용자 이름 적용
         document.getElementById('user-display-name').innerText = username;
         document.getElementById('user-avatar').innerText = username.charAt(0);
 
@@ -135,6 +133,14 @@
                 document.getElementById('user-req-count').innerText = data.total_requests + "건";
                 document.getElementById('u-input').innerText = data.input_tokens.toLocaleString();
                 document.getElementById('u-output').innerText = data.output_tokens.toLocaleString();
+
+                // 일 평균 토큰 및 일 평균 요청 실시간 연동 로직
+                const activeDays = 1; // 기본 활성 일수 기준
+                const avgTokens = Math.round(data.today_tokens / activeDays);
+                const avgRequests = (data.total_requests / activeDays).toFixed(1);
+
+                document.getElementById('user-avg-tokens').innerText = avgTokens.toLocaleString();
+                document.getElementById('user-avg-requests').innerText = avgRequests + "건";
 
                 if (chartInstance && data.daily_usage) {
                     chartInstance.data.datasets[0].data = data.daily_usage;

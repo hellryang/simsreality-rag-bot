@@ -14,6 +14,7 @@
             --accent-purple: #6366F1;
             --accent-cyan: #06B6D4;
             --accent-orange: #F59E0B;
+            --accent-green: #10B981;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Pretendard', sans-serif; }
         body { background-color: var(--bg-dark); color: var(--text-main); padding: 20px 40px; }
@@ -31,7 +32,7 @@
         .metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
         .card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; }
         .card-label { color: var(--text-sub); font-size: 12px; margin-bottom: 12px; }
-        .card-value { font-size: 28px; font-weight: bold; margin-bottom: 8px; }
+        .card-value { font-size: 26px; font-weight: bold; margin-bottom: 8px; }
         .card-sub { color: var(--text-sub); font-size: 11px; }
 
         .main-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; margin-bottom: 20px; }
@@ -44,14 +45,13 @@
         .mini-metric-value { font-size: 18px; font-weight: bold; color: #818CF8; }
         .mini-metric-label { font-size: 11px; color: var(--text-sub); margin-top: 4px; }
 
-        /* 2칸 배열로 수정된 카테고리 그리드 */
         .category-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-top: 12px; }
         .category-card { background: #161D2B; border: 1px solid var(--border-color); border-radius: 8px; padding: 16px; }
         .cat-percent { font-size: 24px; font-weight: bold; color: #818CF8; margin-bottom: 4px; }
         .cat-title { font-size: 13px; font-weight: bold; }
         .cat-sub { font-size: 11px; color: var(--text-sub); margin-top: 4px; }
-        .progress-bar { height: 4px; background: #1E293B; border-radius: 2px; margin-top: 12px; overflow: hidden; }
-        .progress-fill { height: 100%; background: #6366F1; }
+        .progress-bar { height: 6px; background: #1E293B; border-radius: 3px; margin-top: 12px; overflow: hidden; }
+        .progress-fill { height: 100%; background: #10B981; transition: width 0.3s ease; }
 
         .log-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; }
         table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
@@ -71,27 +71,27 @@
     <div class="title-area">
         <div>
             <h1>관리자 대시보드</h1>
-            <p>카카오워크 AI 봇 · 실시간 요청 집계 현황</p>
+            <p>카카오워크 AI 봇 · 실시간 요청 및 남은 토큰 현황</p>
         </div>
         <div class="status-badge">● 실시간 연동 중</div>
     </div>
 
-    <!-- Top Metrics Cards -->
+    <!-- 상단 4개 지표 카드 (남은 토큰량 카드 추가) -->
     <div class="metrics-grid">
+        <div class="card" style="border-left: 4px solid var(--accent-green);">
+            <div class="card-label">남은 토큰량 (잔여)</div>
+            <div class="card-value" id="remaining-tokens" style="color: var(--accent-green);">1,000,000</div>
+            <div class="card-sub" id="remaining-sub">월 한도: 1,000,000 토큰 (100% 남음)</div>
+        </div>
         <div class="card">
             <div class="card-label">금일 토큰 사용량</div>
             <div class="card-value" id="today-tokens">0</div>
-            <div class="card-sub">사용 내역 없음</div>
-        </div>
-        <div class="card">
-            <div class="card-label">주간 토큰 사용량</div>
-            <div class="card-value" id="weekly-tokens">0</div>
-            <div class="card-sub">사용 내역 없음</div>
+            <div class="card-sub">오늘 소모한 토큰</div>
         </div>
         <div class="card">
             <div class="card-label">월간 토큰 사용량</div>
             <div class="card-value" id="monthly-tokens">0</div>
-            <div class="card-sub">사용 내역 없음</div>
+            <div class="card-sub">이번 달 소모 총 토큰</div>
         </div>
         <div class="card">
             <div class="card-label">총 요청 건수</div>
@@ -101,7 +101,7 @@
     </div>
 
     <div class="main-grid">
-        <!-- Left Column: Chart & Categories -->
+        <!-- 좌측: 차트 및 유형별 질의 분포 -->
         <div>
             <div class="chart-card">
                 <h3 style="font-size: 15px; margin-bottom: 16px;">일별 토큰 사용 추이</h3>
@@ -127,7 +127,6 @@
                 </div>
             </div>
 
-            <!-- 유형별 질의 분포 (메신저 요약, 노션 연동 2칸 구성) -->
             <div class="chart-card">
                 <h3 style="font-size: 15px; margin-bottom: 12px;">유형별 질의 분포</h3>
                 <div class="category-grid">
@@ -147,26 +146,28 @@
             </div>
         </div>
 
-        <!-- Right Column: API Details & Cumulative Stats -->
+        <!-- 우측: Claude API 및 잔여 한도 카드 -->
         <div>
             <div class="side-card">
-                <h3 style="font-size: 15px; margin-bottom: 12px;">Claude API 토큰 현황</h3>
+                <h3 style="font-size: 15px; margin-bottom: 12px;">Claude API 잔여 한도</h3>
+                <div class="info-row"><span>월 한도량</span><span id="side-limit" style="font-weight:bold;">1,000,000</span></div>
+                <div class="info-row"><span>사용한 토큰</span><span id="side-used" style="color:#F59E0B; font-weight:bold;">0</span></div>
+                <div class="info-row"><span>남은 잔여 토큰</span><span id="side-rem" style="color:#10B981; font-weight:bold;">1,000,000</span></div>
+                <div class="progress-bar" style="margin-top:14px;">
+                    <div class="progress-fill" id="limit-bar" style="width: 100%; background: #10B981;"></div>
+                </div>
+            </div>
+
+            <div class="side-card">
+                <h3 style="font-size: 15px; margin-bottom: 12px;">Claude API 토큰 구성</h3>
                 <div class="info-row"><span>Input 토큰</span><span id="side-input" style="color:#818CF8; font-weight:bold;">0</span></div>
                 <div class="info-row"><span>Output 토큰</span><span id="side-output" style="color:#06B6D4; font-weight:bold;">0</span></div>
                 <div class="info-row"><span>합계 소모 토큰</span><span id="side-total" style="color:#F59E0B; font-weight:bold;">0</span></div>
             </div>
-
-            <div class="side-card">
-                <h3 style="font-size: 15px; margin-bottom: 12px;">누적 통계</h3>
-                <div class="info-row"><span>총 누적 요청</span><span id="stat-total-req" style="color:#818CF8; font-weight:bold;">0건</span></div>
-                <div class="info-row"><span>총 누적 토큰</span><span id="stat-total-tok" style="color:#818CF8; font-weight:bold;">0</span></div>
-                <div class="info-row"><span>월 최대 요청</span><span style="color:#F59E0B; font-weight:bold;">0건</span></div>
-                <div class="info-row"><span>단일 최대 요청</span><span style="color:#F59E0B; font-weight:bold;">0건</span></div>
-            </div>
         </div>
     </div>
 
-    <!-- User Log Repository -->
+    <!-- 사용자 로그 저장소 -->
     <div class="log-card">
         <h3 style="font-size: 15px;">사용자 로그 저장소 (실시간 요청 내역)</h3>
         <table>
@@ -195,22 +196,29 @@
                 const tokenRes = await fetch('/api/tokens');
                 const data = await tokenRes.json();
 
+                // 상단 남은 토큰 및 지표 업데이트
+                document.getElementById('remaining-tokens').innerText = data.remaining_tokens.toLocaleString();
+                const remPercent = (100 - data.usage_percentage).toFixed(1);
+                document.getElementById('remaining-sub').innerText = `월 한도: ${data.monthly_limit.toLocaleString()} 토큰 (${remPercent}% 남음)`;
+
                 document.getElementById('today-tokens').innerText = data.today_tokens.toLocaleString();
-                document.getElementById('weekly-tokens').innerText = data.weekly_tokens.toLocaleString();
                 document.getElementById('monthly-tokens').innerText = data.monthly_tokens.toLocaleString();
                 document.getElementById('total-requests').innerText = data.total_requests + "건";
 
+                // 하단 및 사이드 상세 수치 업데이트
                 document.getElementById('footer-req').innerText = data.total_requests + "건";
                 document.getElementById('footer-tok').innerText = data.today_tokens.toLocaleString();
                 document.getElementById('footer-in').innerText = data.input_tokens.toLocaleString();
                 document.getElementById('footer-out').innerText = data.output_tokens.toLocaleString();
 
+                document.getElementById('side-limit').innerText = data.monthly_limit.toLocaleString();
+                document.getElementById('side-used').innerText = data.monthly_tokens.toLocaleString();
+                document.getElementById('side-rem').innerText = data.remaining_tokens.toLocaleString();
+                document.getElementById('limit-bar').style.width = remPercent + "%";
+
                 document.getElementById('side-input').innerText = data.input_tokens.toLocaleString();
                 document.getElementById('side-output').innerText = data.output_tokens.toLocaleString();
                 document.getElementById('side-total').innerText = data.today_tokens.toLocaleString();
-
-                document.getElementById('stat-total-req').innerText = data.total_requests + "건";
-                document.getElementById('stat-total-tok').innerText = data.today_tokens.toLocaleString();
 
                 if (chartInstance && data.daily_usage) {
                     chartInstance.data.datasets[0].data = data.daily_usage;
