@@ -21,10 +21,11 @@ logger = logging.getLogger(__name__)
 # 답변 하나에 이 정도면 충분하다. 너무 크게 잡으면 모델이 장황해지고 비용도 는다.
 MAX_TOKENS = 2000
 
-# 요약·인용처럼 사실을 옮기는 작업은 낮은 온도가 맞다. 높이면 없는 말을 지어낸다.
-# (temperature는 Haiku 4.5에서 사용 가능하다. Opus 4.7 이후 모델에서는 제거되었으므로
-#  상위 모델로 바꿀 때는 이 줄을 함께 확인해야 한다.)
-TEMPERATURE = 0.3
+# 사실을 옮기는 작업(일정 추출, 캘린더 서술)이라 낮은 쪽이 맞다. 예전에는
+# temperature=0.3 으로 했는데, anthropic SDK 1.x 에서 temperature·top_p 가
+# messages.create() 에서 제거되어 그 자리를 output_config.effort 가 대신한다.
+# 배포 중 TypeError 로 실제로 막혔던 지점이다.
+EFFORT = "low"
 
 _MAX_RETRY = 3
 
@@ -161,7 +162,7 @@ async def _create_message(system: str, user_content: str) -> str:
     response = await _request(
         model=settings.anthropic_model,
         max_tokens=MAX_TOKENS,
-        temperature=TEMPERATURE,
+        output_config={"effort": EFFORT},
         system=system,
         messages=[{"role": "user", "content": user_content}],
     )
@@ -397,7 +398,7 @@ async def _answer_with_tools(system: str, user_content: str, today: str) -> str:
         response = await _request(
             model=settings.anthropic_model,
             max_tokens=MAX_TOKENS,
-            temperature=TEMPERATURE,
+            output_config={"effort": EFFORT},
             system=system,
             tools=[CALENDAR_TOOL],
             tool_choice=(
@@ -432,7 +433,7 @@ async def _answer_with_tools(system: str, user_content: str, today: str) -> str:
     response = await _request(
         model=settings.anthropic_model,
         max_tokens=MAX_TOKENS,
-        temperature=TEMPERATURE,
+        output_config={"effort": EFFORT},
         system=system,
         messages=messages,
     )
@@ -657,7 +658,7 @@ async def extract_schedule_events(chat_log: str, today: str) -> list[dict]:
     response = await _request(
         model=settings.anthropic_model,
         max_tokens=MAX_TOKENS,
-        temperature=TEMPERATURE,
+        output_config={"effort": EFFORT},
         system=build_schedule_system_prompt(today),
         tools=[SCHEDULE_TOOL],
         # 모델이 설명만 늘어놓지 않고 반드시 도구를 쓰게 강제한다.

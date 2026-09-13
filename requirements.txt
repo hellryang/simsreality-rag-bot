@@ -1,23 +1,53 @@
-fastapi
-uvicorn[standard]
-pydantic-settings
-python-dotenv
-notion-client
-anthropic
-slack-bolt
-apscheduler
-chromadb
-sentence-transformers
-pytest
-pytest-asyncio
-httpx
+# Python 3.12(Ubuntu 24.04) / 3.14(Windows) 에서 검증한 조합
+#
+# 버전을 고정한다. 고정하지 않으면 배포할 때마다 다른 버전이 깔려 로컬에서
+# 되던 것이 서버에서 깨진다. 실제로 anthropic 이 로컬 0.121 / 서버 1.5 로
+# 갈려, SDK 1.x 에서 제거된 temperature 때문에 TypeError 가 났다.
 
-# KakaoWork 파일 업로드 (app/services/kakao_upload.py)
-python-multipart
-pypdf
-python-docx
-openpyxl
+# --- 봇 구동 (필수) ---
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+pydantic-settings==2.15.0
+python-dotenv==1.2.3
+httpx==0.28.1
 
-# 리눅스 배포 환경의 sqlite3 버전이 낮아 ChromaDB 가 거부하는 문제 우회.
-# 윈도우에는 휠이 없고 필요하지도 않아 플랫폼 조건을 붙인다.
-pysqlite3-binary; sys_platform == "linux"
+# 노션 캘린더 조회·등록
+# 3.x 에서 행 조회가 databases.query -> data_sources.query 로 바뀌었다
+# (Notion API 2025-09-03 의 데이터 소스 도입). notion_service 가 그 형태다.
+notion-client==3.1.0
+
+# Claude 호출
+# 1.x 에서 temperature·top_p 가 messages.create() 에서 제거되고 output_config
+# 가 그 자리를 대신한다. claude_service 가 output_config 를 쓴다.
+anthropic==1.5.0
+
+# 카카오워크 파일 업로드 (app/services/kakao_upload.py)
+python-multipart==0.0.32
+pypdf==6.18.1
+python-docx==1.2.0
+openpyxl==3.1.5
+
+# 주기 수집용 (app/scheduler/jobs.py - 아직 비어 있음)
+APScheduler==3.11.3
+
+# --- 테스트 ---
+pytest==9.1.1
+pytest-asyncio==1.4.0
+
+# --- 벡터 검색 (선택) -------------------------------------------------
+#
+# USE_VECTOR_SEARCH=false 로 쓰는 배포에서는 설치하지 않는다. 아래 두 줄이
+# torch 를 끌고 와 설치 용량이 121MB -> 1.4GB 가 된다(t3.micro 디스크 8GB).
+#
+# 코드가 이 패키지들을 지연 import 하므로 없어도 앱이 기동한다. 노션 문서
+# 의미 검색이 필요해지면 주석을 풀고 USE_VECTOR_SEARCH=true 로 둔다.
+#
+# chromadb==1.5.9
+# sentence-transformers==5.7.0
+#
+# 리눅스의 sqlite3 가 낮은 버전이면 ChromaDB 가 기동을 거부한다. 위 두 줄을
+# 켤 때 함께 켠다(app/main.py 가 pysqlite3 를 sqlite3 자리에 끼워 넣는다).
+# pysqlite3-binary; sys_platform == "linux"
+
+# --- Slack (개발하지 않기로 함) --------------------------------------
+# slack-bolt==1.27.0
