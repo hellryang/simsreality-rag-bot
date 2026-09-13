@@ -14,6 +14,13 @@ from app.services.qa_pipeline import search_documents
 from app.services.vector_store import VectorStore
 
 
+async def answer_query(text: str) -> str:
+    """ChromaDB 검색 결과를 바탕으로 질문에 답한다."""
+    hits = search_documents(text)
+    answer = await answer_with_citations(text, hits)
+    return answer.text
+
+
 def extract_message(payload: dict[str, Any]) -> tuple[str, str]:
     """카카오워크 이벤트에서 메시지와 사용자 식별자를 꺼낸다.
 
@@ -50,9 +57,7 @@ async def handle_message(payload: dict[str, Any]) -> dict[str, str]:
     is_calendar_request = any(keyword in text for keyword in ("회의", "일정", "미팅"))
 
     if is_query:
-        chroma_hits = search_documents(text)
-        answer = await answer_with_citations(text, chroma_hits)
-        return {"text": answer.text, "notion_url": ""}
+        return {"text": await answer_query(text), "notion_url": ""}
 
     if is_calendar_request:
         event = await extract_calendar_event(text)
