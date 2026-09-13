@@ -17,9 +17,12 @@ httpx==0.28.1
 notion-client==3.1.0
 
 # Claude 호출
-# 1.x 에서 temperature·top_p 가 messages.create() 에서 제거되고 output_config
-# 가 그 자리를 대신한다. claude_service 가 output_config 를 쓴다.
-anthropic==1.5.0
+# 0.x 로 고정한다. 1.x 는 messages.create() 에서 temperature 를 제거했고,
+# 그 대안인 output_config.effort 는 Haiku 4.5 가 지원하지 않는다(400).
+# 두 가지가 겹쳐 배포 중 막혔다. 로컬에서 모든 기능을 검증한 조합이 이것이다.
+# 상위 모델로 올릴 때 SDK 도 함께 올리고 claude_service 의 TEMPERATURE 를
+# output_config 로 바꾼다.
+anthropic==0.121.0
 
 # 카카오워크 파일 업로드 (app/services/kakao_upload.py)
 python-multipart==0.0.32
