@@ -71,8 +71,9 @@ def build_system_prompt(today: str = "") -> str:
         "이 날짜를 기준으로 계산한다.\n"
         "\n"
         "일정 관련 규칙:\n"
-        "5. 일정·회의·예약·빈 날에 대한 질문이면 lookup_calendar 도구로 "
-        "노션 캘린더를 먼저 조회한다. 컨텍스트만 보고 추측하지 않는다.\n"
+        "5. 일정에 관한 질문이면 lookup_calendar 도구로 노션 캘린더를 먼저 "
+        "조회한다. 어떤 일정이 있는지·빈 날뿐 아니라 특정 일정의 참석자·장소·"
+        "시간·유형·프로젝트를 묻는 질문도 포함한다. 추측하지 않는다.\n"
         "5-1. 도구의 period에는 '저번 주'->last_week처럼 **라벨만** 고른다. "
         "그 기간이 며칠부터 며칠까지인지는 직접 계산하지 않는다. "
         "사용자가 날짜를 직접 말한 경우에만 custom을 쓴다.\n"
@@ -80,7 +81,11 @@ def build_system_prompt(today: str = "") -> str:
         "이때는 출처 번호를 붙이지 않고, 규칙 3의 '근거 없음'에도 해당하지 않는다.\n"
         "7. 도구가 '일정이 없는 날'을 알려주면 그 목록을 그대로 전한다. "
         "날짜를 직접 계산하거나 빼거나 더하지 않는다.\n"
-        "8. 도구가 조회에 실패했다고 하면 실패했다고 알린다. 임의로 답하지 않는다."
+        "8. 도구가 조회에 실패했다고 하면 실패했다고 알린다. 임의로 답하지 않는다.\n"
+        "9. 조회 결과에서 찾지 못했고 더 넓은 기간을 볼 필요가 있으면, "
+        "'더 조회하겠습니다'라고 말하지 말고 **즉시 도구를 다시 호출한다.** "
+        "도구는 한 번의 답변에서 여러 번 호출할 수 있다. 예고만 하고 끝내면 "
+        "사용자는 아무 답도 받지 못한다."
     )
 
 
@@ -179,9 +184,18 @@ MAX_TOOL_ROUNDS = 3
 CALENDAR_TOOL: dict = {
     "name": "lookup_calendar",
     "description": (
-        "노션 캘린더에서 지정한 기간의 일정과 '일정이 하나도 없는 날'을 조회한다. "
-        "일정·회의·예약·빈 날·언제 시간이 되는지에 대한 질문이면 "
-        "추측하지 말고 반드시 이 도구를 먼저 호출한다."
+        "노션 캘린더에서 지정한 기간의 일정을 조회한다. 일정마다 이름·날짜·시간·"
+        "장소·유형·참석자·프로젝트·노션 링크가 함께 나오고, 그 기간에 "
+        "'일정이 하나도 없는 날' 목록도 같이 나온다. "
+        "다음 질문에는 추측하지 말고 반드시 이 도구를 먼저 호출한다: "
+        "(1) 어떤 일정이 있는지, 빈 날이 언제인지, 언제 시간이 되는지. "
+        "(2) 특정 일정의 **참석자가 누구인지**, 장소가 어디인지, 몇 시인지, "
+        "어떤 유형인지, 어느 프로젝트인지. "
+        "(3) **특정 인물이 참여한 일정**, 특정 장소에서 한 일정, 특정 프로젝트의 "
+        "일정이 언제인지. 이때는 기간을 넓게(past_3_months 등) 잡고 keyword에 "
+        "그 사람 이름이나 장소를 넣는다. 그러면 해당하는 일정만 돌아온다.\n"
+        "날짜를 모르면 기간을 넓게 잡아 조회한다. 조회해 보지 않고 "
+        "'정보가 없다'고 답하면 안 된다 - 실제로는 있는데 놓치는 일이 생긴다."
     ),
     "input_schema": {
         "type": "object",
@@ -194,18 +208,44 @@ CALENDAR_TOOL: dict = {
                     "this_week",
                     "last_week",
                     "next_week",
+                    "three_months_ago",
+                    "two_months_ago",
+                    "last_month",
                     "this_month",
                     "next_month",
+                    "in_two_months",
+                    "in_three_months",
+                    "past_3_months",
+                    "next_3_months",
+                    "around_3_months",
                     "custom",
                 ],
                 "description": (
                     "조회할 기간. '오늘'→today, '내일'→tomorrow, "
                     "'이번 주'→this_week, '저번 주'/'지난주'→last_week, "
-                    "'다음 주'→next_week, '이번 달'→this_month, "
-                    "'다음 달'→next_month. "
+                    "'다음 주'→next_week. "
+                    "특정 한 달만 볼 때(그 달 1일~말일): '이번 달'→this_month, "
+                    "'지난달'→last_month, '지지난달'→two_months_ago, "
+                    "'3개월 전 그 달'→three_months_ago, '다음 달'→next_month, "
+                    "'2개월 후'→in_two_months, '3개월 후'→in_three_months. "
+                    "여러 달을 한 번에 훑을 때: 과거 전체는 past_3_months(3개월 전~오늘), "
+                    "앞으로 전체는 next_3_months, 앞뒤 모두는 around_3_months. "
+                    "**날짜가 특정되지 않은 질문에는 반드시 범위 라벨을 쓴다.** "
+                    "'이전에', '예전에', '언제였지', '전에 한' → past_3_months. "
+                    "사람 이름·장소·프로젝트로 일정을 찾는 질문 → past_3_months 또는 "
+                    "around_3_months. 한 달짜리 라벨로 찍어 맞히려 하면 놓친다. "
                     "'9월 15일부터 20일까지'처럼 날짜를 직접 말한 경우에만 custom. "
-                    "기간 언급이 없으면 custom을 쓰지 말고 this_week을 쓴다. "
                     "**날짜를 직접 계산하지 말고 라벨만 고른다.**"
+                ),
+            },
+            "keyword": {
+                "type": "string",
+                "description": (
+                    "일정을 걸러낼 말. 사람 이름·장소·프로젝트·일정 이름 어디에든 "
+                    "포함되면 남는다. 예: '이후경', '대구', '정기회의'. "
+                    "특정 인물이나 장소로 찾는 질문에는 반드시 채운다 - 기간만 "
+                    "넓히면 목록이 수십 건이 되어 놓치기 쉽다. "
+                    "전체 목록이 필요할 때만 비워 둔다."
                 ),
             },
             "start_date": {
@@ -245,9 +285,19 @@ async def _run_calendar_tool(tool_input: dict, today: str) -> str:
     except notion_service.NotionWriteError as exc:
         return f"조회 실패: {exc}"
 
+    keyword = str(tool_input.get("keyword", "")).strip()
+
     try:
         events = await notion_service.query_calendar_events(start, end)
+        # 전체 일정 기준의 빈 날. "아무 일정도 없는 날"을 묻는 질문에 쓴다.
         free_days = notion_service.compute_free_days(start, end, events)
+        matched_free_days: list[dict[str, str]] = []
+        if keyword:
+            events = notion_service.filter_events(events, keyword)
+            # 걸러낸 목록 기준의 빈 날 = 그 사람(키워드)이 비어 있는 날.
+            # "이후경이 참여 가능한 날"이 바로 이것이다. 전체가 비어야
+            # 가능한 게 아니라 그 사람만 비어 있으면 된다.
+            matched_free_days = notion_service.compute_free_days(start, end, events)
     except notion_service.NotionWriteError as exc:
         return f"조회 실패: {exc}"
     except Exception:
@@ -255,24 +305,70 @@ async def _run_calendar_tool(tool_input: dict, today: str) -> str:
         return "조회 실패: 캘린더를 읽는 중 오류가 발생했습니다."
 
     lines = [f"조회 기간: {start} ~ {end} (오늘은 {today})"]
+    if keyword:
+        lines.append(f"'{keyword}'가 포함된 일정만 골랐다.")
     if notion_service.is_past_range(end, today):
         # 사용자가 "저번 주에 회의 가능한 날"처럼 지난 기간을 묻는 일이 있다.
         # 답은 하되 지난 날이라는 사실을 함께 알려야 헷갈리지 않는다.
         lines.append("주의: 이 기간은 이미 지났다. 답변에서 그 점을 알릴 것.")
 
+    if keyword and not events:
+        lines.append(
+            f"이 기간에 '{keyword}'가 포함된 일정은 없다. "
+            f"다른 기간을 보려면 period를 바꿔 다시 호출할 것."
+        )
     lines.append(f"일정 {len(events)}건")
     for event in events:
         when = event["date"]
         if event.get("end_date") and event["end_date"] != event["date"]:
             when += f"~{event['end_date']}"
-        detail = " / ".join(
-            part
-            for part in (event.get("time"), event.get("place"), event.get("type"))
-            if part
-        )
-        lines.append(f"  - {when} {event['name']}{' / ' + detail if detail else ''}")
 
-    if free_days:
+        # 노션 캘린더의 속성을 전부 실어 보낸다. "누가 참석했어?", "어느
+        # 프로젝트 일정이야?" 같은 질문에도 답할 수 있어야 하기 때문이다.
+        # 라벨을 붙이는 이유: 값만 나열하면 "부산"이 장소인지 참석자인지
+        # 모델이 헷갈린다.
+        parts = [
+            label + value
+            for label, value in (
+                ("", event.get("time") or ""),
+                ("장소 ", event.get("place") or ""),
+                ("유형 ", event.get("type") or ""),
+                ("참석 ", event.get("attendees") or ""),
+                ("프로젝트 ", event.get("project") or ""),
+            )
+            if value
+        ]
+        detail = " / ".join(parts)
+        lines.append(f"  - {when} {event['name']}{' / ' + detail if detail else ''}")
+        if event.get("url"):
+            lines.append(f"      {event['url']}")
+
+    if keyword:
+        # 그 키워드 기준으로 비어 있는 날 = 참여·예약이 가능한 날.
+        # 전체 일정 기준 빈 날(free_days)은 여기서 내보내지 않는다. 수십 일치
+        # 날짜가 겹쳐 붙으면 정작 찾는 일정이 묻힌다.
+        busy = sorted({event["date"] for event in events if event.get("date")})
+        if busy:
+            lines.append(
+                f"[{keyword} 선약 있음 - 이 날은 시간이 안 된다]: {', '.join(busy)}"
+            )
+        if matched_free_days:
+            labels = ", ".join(
+                f"{d['date']}({d['weekday']})" for d in matched_free_days
+            )
+            lines.append(
+                f"[{keyword} 일정 비어 있음 - 시간이 되는 날, 참여·예약 가능]"
+                f" {len(matched_free_days)}일: {labels}"
+            )
+        else:
+            lines.append(
+                f"[{keyword} 일정 비어 있음]: 없음 (조회 기간 내내 선약이 있다)"
+            )
+        lines.append(
+            "위 두 줄을 뒤집어 읽지 말 것. '언제 시간이 되나'·'참여 가능한 날'을"
+            " 물으면 '비어 있음' 줄을 답한다."
+        )
+    elif free_days:
         labels = ", ".join(f"{d['date']}({d['weekday']})" for d in free_days)
         lines.append(f"일정이 없는 날 {len(free_days)}일: {labels}")
     else:
@@ -290,13 +386,25 @@ async def _answer_with_tools(system: str, user_content: str, today: str) -> str:
     """
     messages: list[dict] = [{"role": "user", "content": user_content}]
 
-    for _ in range(MAX_TOOL_ROUNDS):
+    for round_index in range(MAX_TOOL_ROUNDS):
+        # 첫 호출은 조회를 강제한다. 벡터 검색을 끈 구성에서는 캘린더가
+        # 유일한 근거원인데, 모델이 조회를 건너뛰고 "정보가 없다"고 단정하는
+        # 경우가 실제로 있었다(실제로는 있는 일정을 놓쳤다). 프롬프트 지시로는
+        # 막히지 않아 구조로 막는다.
+        # 두 번째 라운드부터는 auto다. 계속 강제하면 도구만 반복 호출하고
+        # 최종 답변을 만들지 못한다.
+        forced = round_index == 0
         response = await _request(
             model=settings.anthropic_model,
             max_tokens=MAX_TOKENS,
             temperature=TEMPERATURE,
             system=system,
             tools=[CALENDAR_TOOL],
+            tool_choice=(
+                {"type": "tool", "name": CALENDAR_TOOL["name"]}
+                if forced
+                else {"type": "auto"}
+            ),
             messages=messages,
         )
 

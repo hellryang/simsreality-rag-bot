@@ -497,8 +497,30 @@ PERIOD_THIS_WEEK = "this_week"
 PERIOD_LAST_WEEK = "last_week"
 PERIOD_NEXT_WEEK = "next_week"
 PERIOD_THIS_MONTH = "this_month"
+PERIOD_LAST_MONTH = "last_month"
 PERIOD_NEXT_MONTH = "next_month"
+PERIOD_TWO_MONTHS_AGO = "two_months_ago"
+PERIOD_THREE_MONTHS_AGO = "three_months_ago"
+PERIOD_IN_TWO_MONTHS = "in_two_months"
+PERIOD_IN_THREE_MONTHS = "in_three_months"
+PERIOD_PAST_3_MONTHS = "past_3_months"
+PERIOD_NEXT_3_MONTHS = "next_3_months"
+PERIOD_AROUND_3_MONTHS = "around_3_months"
 PERIOD_CUSTOM = "custom"
+
+# 월 라벨을 "오늘 기준 몇 달 전/후"로 옮긴 표. 앞뒤 3개월까지 다룬다.
+# 라벨을 하나씩 두는 이유: 모델은 "지지난달"을 two_months_ago로 **분류**하는
+# 일만 하고, 그것이 몇 월인지는 계산하지 않는다. 숫자 오프셋을 받으면
+# -2인지 -3인지 모델이 세어야 하고, 그게 틀리는 종류의 작업이다.
+_MONTH_OFFSETS = {
+    PERIOD_THREE_MONTHS_AGO: -3,
+    PERIOD_TWO_MONTHS_AGO: -2,
+    PERIOD_LAST_MONTH: -1,
+    PERIOD_THIS_MONTH: 0,
+    PERIOD_NEXT_MONTH: 1,
+    PERIOD_IN_TWO_MONTHS: 2,
+    PERIOD_IN_THREE_MONTHS: 3,
+}
 
 PERIOD_LABELS = (
     PERIOD_TODAY,
@@ -507,7 +529,15 @@ PERIOD_LABELS = (
     PERIOD_LAST_WEEK,
     PERIOD_NEXT_WEEK,
     PERIOD_THIS_MONTH,
+    PERIOD_LAST_MONTH,
     PERIOD_NEXT_MONTH,
+    PERIOD_TWO_MONTHS_AGO,
+    PERIOD_THREE_MONTHS_AGO,
+    PERIOD_IN_TWO_MONTHS,
+    PERIOD_IN_THREE_MONTHS,
+    PERIOD_PAST_3_MONTHS,
+    PERIOD_NEXT_3_MONTHS,
+    PERIOD_AROUND_3_MONTHS,
     PERIOD_CUSTOM,
 )
 
@@ -521,6 +551,16 @@ def _month_end(day: date) -> date:
     if day.month == 12:
         return date(day.year, 12, 31)
     return date(day.year, day.month + 1, 1) - timedelta(days=1)
+
+
+def _shift_month(day: date, months: int) -> date:
+    """그 달의 1일로 옮긴 뒤 months만큼 이동한다.
+
+    month +- n 으로 계산하면 1월에서 0월이 되거나 12월에서 13월이 되어
+    터진다. 연·월을 통째로 개월 수로 환산해 더하면 경계가 저절로 맞는다.
+    """
+    total = day.year * 12 + (day.month - 1) + months
+    return date(total // 12, total % 12 + 1, 1)
 
 
 def resolve_period(
@@ -572,15 +612,29 @@ def resolve_period(
     if period == PERIOD_NEXT_WEEK:
         next_monday = monday + timedelta(days=7)
         return next_monday.isoformat(), (next_monday + timedelta(days=6)).isoformat()
-    if period == PERIOD_THIS_MONTH:
-        return base.replace(day=1).isoformat(), _month_end(base).isoformat()
-    if period == PERIOD_NEXT_MONTH:
-        first = _month_end(base) + timedelta(days=1)
+    if period in _MONTH_OFFSETS:
+        first = _shift_month(base, _MONTH_OFFSETS[period])
         return first.isoformat(), _month_end(first).isoformat()
 
-    # 모르는 라벨. 기간을 특정 못 한 것으로 보고 기본 범위를 쓴다.
-    logger.info("알 수 없는 기간 라벨(%s). 기본 범위를 사용합니다.", period)
-    return today, (base + timedelta(days=DEFAULT_LOOKAHEAD_DAYS)).isoformat()
+    # 여러 달을 한 번에 훑는 범위. 기간이 모호한 질문("이전에", "언제였지")
+    # 에 쓴다. 한 달씩 끊어진 라벨로는 이런 질문을 시작할 수 없다.
+    if period == PERIOD_PAST_3_MONTHS:
+        return _shift_month(base, -3).isoformat(), today
+    if period == PERIOD_NEXT_3_MONTHS:
+        return today, _month_end(_shift_month(base, 3)).isoformat()
+    if period == PERIOD_AROUND_3_MONTHS:
+        return (
+            _shift_month(base, -3).isoformat(),
+            _month_end(_shift_month(base, 3)).isoformat(),
+        )
+
+    # 모르는 라벨. 기간을 특정 못 한 것으로 보고 넓게 훑는다.
+    # 좁게 잡으면(예: 오늘~2주) 과거 질문을 놓치고 '없다'고 단정하게 된다.
+    logger.info("알 수 없는 기간 라벨(%s). 앞뒤 3개월을 조회합니다.", period)
+    return (
+        _shift_month(base, -3).isoformat(),
+        _month_end(_shift_month(base, 3)).isoformat(),
+    )
 
 
 def is_past_range(end_date: str, today: str) -> bool:
@@ -764,6 +818,44 @@ async def query_calendar_events(
     events.sort(key=lambda e: (e["date"], e.get("time", "")))
     logger.info("캘린더 %s~%s 일정 %d건 조회", start_date, end_date, len(events))
     return events
+
+
+def filter_events(
+    events: list[dict[str, Any]], keyword: str
+) -> list[dict[str, Any]]:
+    """이름·장소·참석자·프로젝트·유형 어디에든 keyword가 든 일정만 남긴다.
+
+    긴 목록에서 한 줄을 찾는 일은 코드가 정확하다. 모델에게 스캔을 맡겼을 때
+    62건 목록에서 찾던 항목을 놓치고 "없다"고 답한 사례가 있었다. 실제로는
+    그 목록 안에 있었다.
+
+    대소문자를 무시하고 부분 일치로 본다. 사용자가 "이후경"이라고만 말해도
+    "김민준,이후경"에서 걸린다.
+    """
+    if not keyword:
+        return events
+
+    # 모델이 "이후경 대구"처럼 여러 낱말을 한 번에 넘긴다. 전체 문자열을
+    # 그대로 찾으면 0건이 나오므로, 낱말별로 나눠 **전부 포함**(AND)하는
+    # 일정만 남긴다. "이후경"과 "대구"가 각각 참석자·장소에 있어도 걸린다.
+    needles = [word for word in keyword.lower().split() if word]
+    if not needles:
+        return events
+
+    matched: list[dict[str, Any]] = []
+    for event in events:
+        haystack = " ".join(
+            str(event.get(field) or "")
+            for field in ("name", "place", "attendees", "project", "type")
+        ).lower()
+        if all(word in haystack for word in needles):
+            matched.append(event)
+
+    logger.info(
+        "키워드 %r(낱말 %d개)로 %d건 → %d건",
+        keyword, len(needles), len(events), len(matched),
+    )
+    return matched
 
 
 def _date_range(start_date: str, end_date: str) -> list[str]:

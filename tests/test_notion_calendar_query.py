@@ -206,6 +206,56 @@ def test_months_end_on_the_real_last_day():
     assert resolve_period("next_month", TODAY) == ("2026-10-01", "2026-10-31")
 
 
+def test_last_month_is_the_previous_calendar_month():
+    """실제로 없어서 틀렸던 라벨.
+
+    "지난달 일정 알려줘"를 물었더니 last_month가 enum에 없어서 기본
+    범위(오늘~2주)로 떨어졌다. 8월을 물었는데 9월 일정이 나왔다.
+    """
+    assert resolve_period("last_month", TODAY) == ("2026-08-01", "2026-08-31")
+
+
+def test_months_reach_three_back_and_three_forward():
+    """오늘 기준 앞뒤 3개월까지 라벨로 닿아야 한다.
+
+    라벨이 없으면 기본 범위로 떨어져 엉뚱한 기간을 조회한다
+    (last_month가 없던 동안 실제로 그랬다).
+    """
+    expected = {
+        "three_months_ago": ("2026-06-01", "2026-06-30"),
+        "two_months_ago": ("2026-07-01", "2026-07-31"),
+        "last_month": ("2026-08-01", "2026-08-31"),
+        "this_month": ("2026-09-01", "2026-09-30"),
+        "next_month": ("2026-10-01", "2026-10-31"),
+        "in_two_months": ("2026-11-01", "2026-11-30"),
+        "in_three_months": ("2026-12-01", "2026-12-31"),
+    }
+
+    for label, window in expected.items():
+        assert resolve_period(label, TODAY) == window, label
+
+
+def test_month_labels_cross_the_year_in_both_directions():
+    """month +- n 으로 계산하면 0월이나 13월이 되어 터진다."""
+    assert resolve_period("three_months_ago", "2026-01-15") == (
+        "2025-10-01",
+        "2025-10-31",
+    )
+    assert resolve_period("in_three_months", "2026-11-20") == (
+        "2027-02-01",
+        "2027-02-28",
+    )
+
+
+def test_last_month_crosses_the_year_boundary():
+    """1월의 지난달은 작년 12월이다. month-1로 계산하면 0월이 된다."""
+    assert resolve_period("last_month", "2026-01-15") == ("2025-12-01", "2025-12-31")
+
+
+def test_last_month_handles_a_short_february():
+    assert resolve_period("last_month", "2026-03-10") == ("2026-02-01", "2026-02-28")
+
+
 def test_next_month_crosses_the_year_boundary():
     """12월의 다음 달은 이듬해 1월이다. month+1로 계산하면 터진다."""
     assert resolve_period("next_month", "2026-12-15") == ("2027-01-01", "2027-01-31")
@@ -235,12 +285,28 @@ def test_custom_without_valid_dates_is_refused():
         resolve_period("custom", TODAY, "다음주", "")
 
 
-def test_an_unknown_label_falls_back_to_a_useful_window():
-    """모르는 라벨에 빈 결과를 주면 "일정 없음"으로 잘못 답한다."""
-    start, end = resolve_period("한참 뒤", TODAY)
+def test_an_unknown_label_falls_back_to_a_wide_window():
+    """모르는 라벨이면 넓게 훑는다.
 
-    assert start == TODAY
-    assert end > start
+    좁게 잡으면(오늘~2주) 과거 질문을 놓치고 "정보가 없다"고 단정한다.
+    실제로 그렇게 8월 일정을 못 찾은 적이 있다.
+    """
+    start, end = resolve_period("한참 전", TODAY)
+
+    assert start == "2026-06-01"    # 3개월 전 1일
+    assert end == "2026-12-31"      # 3개월 후 말일
+
+
+def test_range_labels_span_several_months():
+    """"이전에", "언제였지"처럼 시점이 불분명한 질문에 쓰는 라벨.
+
+    한 달짜리 라벨(last_month 등)만 있으면 모델이 어느 달을 볼지 정하지
+    못해 조회를 포기한다. 실제로 "이후경이 참여한 이전 대구 출장"을 물었을
+    때 조회조차 하지 않고 "정보가 없다"고 답했다.
+    """
+    assert resolve_period("past_3_months", TODAY) == ("2026-06-01", TODAY)
+    assert resolve_period("next_3_months", TODAY) == (TODAY, "2026-12-31")
+    assert resolve_period("around_3_months", TODAY) == ("2026-06-01", "2026-12-31")
 
 
 def test_a_finished_range_is_flagged_as_past():
