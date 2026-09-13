@@ -11,7 +11,7 @@ router = APIRouter(prefix="/kakao", tags=["kakaowork"])
 
 
 def _blockkit_response(text: str) -> dict[str, Any]:
-    """카카오워크 모달에 표시할 BlockKit 응답을 만든다."""
+    """카카오워크 메시지용 BlockKit 응답을 만든다."""
     return {
         "blocks": [
             {"type": "header", "text": "업무 도우미", "style": "blue"},
@@ -27,7 +27,7 @@ def _extract_query(payload: dict[str, Any]) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
 
-    for key in ("params", "inputs", "values", "action", "data", "form"):
+    for key in ("actions", "params", "inputs", "values", "action", "data", "form"):
         nested = payload.get(key)
         if isinstance(nested, dict):
             query = _extract_query(nested)
@@ -41,20 +41,25 @@ async def kakao_request(request: Request) -> dict[str, Any]:
     """버튼 클릭 시 질문 입력 모달을 반환한다."""
     await request.json()
     return {
-        "blocks": [
-            {"type": "header", "text": "일정·업무 검색", "style": "blue"},
-            {
-                "type": "input",
-                "name": "query",
-                "text": "질문",
-                "placeholder": "예: 9월 22일 회의 누구랑 해?",
-            },
-            {
-                "type": "button",
-                "text": "검색",
-                "action": {"type": "submit", "name": "search"},
-            },
-        ]
+        "view": {
+            "title": "일정·업무 검색",
+            "accept": "검색",
+            "decline": "취소",
+            "value": "search_query",
+            "blocks": [
+                {
+                    "type": "label",
+                    "text": "검색할 질문을 입력하세요.",
+                    "markdown": False,
+                },
+                {
+                    "type": "input",
+                    "name": "query",
+                    "required": True,
+                    "placeholder": "예: 9월 22일 회의 누구랑 해?",
+                },
+            ],
+        },
     }
 
 
