@@ -17,3 +17,7 @@ python-multipart
 pypdf
 python-docx
 openpyxl
+
+# 리눅스 배포 환경의 sqlite3 버전이 낮아 ChromaDB 가 거부하는 문제 우회.
+# 윈도우에는 휠이 없고 필요하지도 않아 플랫폼 조건을 붙인다.
+pysqlite3-binary; sys_platform == "linux"
