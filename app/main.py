@@ -6,9 +6,17 @@ from pathlib import Path
 from backend.notion_service import fetch_notion_schedules
 from app.services.s3_service import upload_file_to_s3
 from app.api.kakao_events import router as kakao_router
+from app.services.embedder import embed_texts
 
 app = FastAPI()
 app.include_router(kakao_router)
+
+
+@app.on_event("startup")
+def warm_up_embedder() -> None:
+    """첫 카카오워크 요청에서 모델 로딩으로 지연되지 않도록 미리 준비한다."""
+    embed_texts(["초기화"])
+
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
