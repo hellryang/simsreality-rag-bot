@@ -33,7 +33,6 @@ from app.core.config import settings
 from app.core.security import mask_secret
 from app.models.schemas import Chunk, Document
 from app.services.embedder import chunk_documents
-from app.services.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -469,6 +468,10 @@ def ingest_documents(documents: list[Document], persist_dir: str | None = None) 
         return 0
 
     chunks: list[Chunk] = chunk_documents(documents)
+    # 지연 import. 벡터 검색을 끈 배포에서는 chromadb 를 설치하지 않으므로
+    # 최상단에서 import 하면 앱이 기동하지 못한다.
+    from app.services.vector_store import VectorStore
+
     VectorStore(persist_dir=persist_dir).add(chunks)
     logger.info("KakaoWork 문서 %d건 → 조각 %d개 적재", len(documents), len(chunks))
     return len(chunks)

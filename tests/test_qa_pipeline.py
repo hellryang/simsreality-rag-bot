@@ -68,10 +68,12 @@ async def test_with_vector_search_off_the_store_is_never_touched(tmp_path, monke
     """
     monkeypatch.setattr(settings, "use_vector_search", False)
 
+    # VectorStore는 함수 안에서 지연 import 한다(벡터 패키지를 설치하지 않은
+    # 배포에서도 앱이 기동해야 한다). 그래서 모듈 속성이 아니라 원본을 막는다.
     def explode(*args, **kwargs):
         raise AssertionError("벡터 검색이 꺼져 있으면 VectorStore를 만들면 안 된다")
 
-    monkeypatch.setattr("app.services.qa_pipeline.VectorStore", explode)
+    monkeypatch.setattr("app.services.vector_store.VectorStore", explode)
 
     called = {}
 

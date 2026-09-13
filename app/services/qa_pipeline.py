@@ -19,7 +19,6 @@ from app.core.config import settings, setup_cli_logging
 from app.models.schemas import Answer, SearchHit
 from app.services.claude_service import answer_with_citations
 from app.services.kakao_service import KST
-from app.services.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +42,8 @@ def search_documents(
     Returns:
         유사도 높은 순 SearchHit 목록. 저장된 문서가 없으면 빈 목록.
     """
+    from app.services.vector_store import VectorStore
+
     store = VectorStore(persist_dir=persist_dir)
     return store.search(question, top_k=top_k)
 
@@ -63,6 +64,8 @@ async def answer_question(
         # 저장소가 통째로 비어 있으면 아직 준비가 안 된 상태다. 이때는
         # 캘린더 도구도 켜지 않고 끊는다. build_db.py를 아직 안 돌린 환경
         # (그리고 API 키 없이 도는 테스트)에서 모델을 부르지 않기 위한 장치다.
+        from app.services.vector_store import VectorStore
+
         store = VectorStore(persist_dir=persist_dir)
         if store.count() == 0:
             logger.warning("벡터 DB가 비어 있습니다. build_db.py를 먼저 실행하세요.")
