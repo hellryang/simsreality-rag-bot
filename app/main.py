@@ -1,4 +1,6 @@
-"""FastAPI 엔트리포인트."""
+__import__('pysqlite3')
+import sys
+sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 from fastapi import FastAPI
 
 from app.api import health, kakao_events, slack_events
