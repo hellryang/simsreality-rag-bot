@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
+from app.services.kakao_service import extract_message
 from app.services.kakao_service import handle_message
 from app.services.kakao_service import answer_query
 
@@ -17,6 +18,51 @@ def _blockkit_response(text: str) -> dict[str, Any]:
             {"type": "header", "text": "업무 도우미", "style": "blue"},
             {"type": "text", "text": text},
         ]
+    }
+
+
+def _welcome_response() -> dict[str, Any]:
+    """질문·업무 기능을 선택하는 초기 말풍선을 만든다."""
+    return {
+        "text": "업무 도우미",
+        "is_allow_to_send_any_conversation": True,
+        "blocks": [
+            {"type": "header", "text": "업무 도우미", "style": "blue"},
+            {
+                "type": "text",
+                "text": (
+                    "무엇이든 물어보세요. Notion·Slack·KakaoWork에 쌓인 "
+                    "문서에서 찾아 출처와 함께 답해드립니다."
+                ),
+                "markdown": True,
+            },
+            {"type": "divider"},
+            {
+                "type": "action",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": "질문하기",
+                        "style": "primary",
+                        "action": {
+                            "type": "call_modal",
+                            "name": "ask_question",
+                            "value": "ask_question",
+                        },
+                    },
+                    {
+                        "type": "button",
+                        "text": "대화 정리 요청",
+                        "style": "default",
+                        "action": {
+                            "type": "call_modal",
+                            "name": "submit_chat_log",
+                            "value": "submit_chat_log",
+                        },
+                    },
+                ],
+            },
+        ],
     }
 
 
@@ -83,6 +129,10 @@ async def kakao_webhook(request: Request) -> dict[str, Any]:
     """카카오워크 Callback에 BlockKit 응답을 반환한다."""
     payload: dict[str, Any] = await request.json()
     try:
+        message, _ = extract_message(payload)
+        if message.strip().lower() in {"메뉴", "menu"}:
+            return _welcome_response()
+
         result = await handle_message(payload)
         return {
             "text": result["text"],
