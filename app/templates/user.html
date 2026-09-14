@@ -62,32 +62,32 @@
         <div class="card">
             <div class="card-label">금일 토큰</div>
             <div class="card-value" id="user-today">0</div>
-            <div class="card-sub">사용 내역 반영 중</div>
+            <div class="card-sub">오늘 사용한 전체 토큰</div>
         </div>
         <div class="card">
             <div class="card-label">주간 토큰</div>
             <div class="card-value" id="user-weekly">0</div>
-            <div class="card-sub">사용 내역 반영 중</div>
+            <div class="card-sub">최근 7일 누적</div>
         </div>
         <div class="card">
             <div class="card-label">월간 토큰</div>
             <div class="card-value" id="user-monthly">0</div>
-            <div class="card-sub">사용 내역 반영 중</div>
+            <div class="card-sub">이번 달 누적</div>
         </div>
         <div class="card">
-            <div class="card-label">일 평균 토큰</div>
+            <div class="card-label">회당 평균 토큰</div>
+            <div class="card-value" id="user-per-req-tokens" style="color: #6366F1;">0</div>
+            <div class="card-sub">1회 질문당 평균 소모량</div>
+        </div>
+        <div class="card">
+            <div class="card-label">주간 일 평균 토큰</div>
             <div class="card-value" id="user-avg-tokens">0</div>
-            <div class="card-sub">실시간 계산 완료</div>
-        </div>
-        <div class="card">
-            <div class="card-label">일 평균 요청</div>
-            <div class="card-value" id="user-avg-requests">0건</div>
-            <div class="card-sub">실시간 계산 완료</div>
+            <div class="card-sub">최근 7일 기준 일 평균</div>
         </div>
         <div class="card">
             <div class="card-label">총 대화 수</div>
             <div class="card-value" id="user-req-count">0건</div>
-            <div class="card-sub">이번 달 전체</div>
+            <div class="card-sub">누적 요청 건수</div>
         </div>
     </div>
 
@@ -100,8 +100,8 @@
         <div>
             <div class="side-card">
                 <h3 style="font-size: 15px; margin-bottom: 12px;">토큰 상세 구성</h3>
-                <div class="info-row"><span>Input 토큰</span><span id="u-input" style="font-weight: bold;">0</span></div>
-                <div class="info-row"><span>Output 토큰</span><span id="u-output" style="font-weight: bold; color: #06B6D4;">0</span></div>
+                <div class="info-row"><span>Input 토큰 (질문)</span><span id="u-input" style="font-weight: bold;">0</span></div>
+                <div class="info-row"><span>Output 토큰 (응답)</span><span id="u-output" style="font-weight: bold; color: #06B6D4;">0</span></div>
             </div>
         </div>
     </div>
@@ -127,20 +127,21 @@
                 const res = await fetch(`/api/user/${encodeURIComponent(username)}/tokens`);
                 const data = await res.json();
 
-                document.getElementById('user-today').innerText = data.today_tokens.toLocaleString();
-                document.getElementById('user-weekly').innerText = data.weekly_tokens.toLocaleString();
-                document.getElementById('user-monthly').innerText = data.monthly_tokens.toLocaleString();
-                document.getElementById('user-req-count').innerText = data.total_requests + "건";
-                document.getElementById('u-input').innerText = data.input_tokens.toLocaleString();
-                document.getElementById('u-output').innerText = data.output_tokens.toLocaleString();
+                document.getElementById('user-today').innerText = (data.today_tokens || 0).toLocaleString();
+                document.getElementById('user-weekly').innerText = (data.weekly_tokens || 0).toLocaleString();
+                document.getElementById('user-monthly').innerText = (data.monthly_tokens || 0).toLocaleString();
+                document.getElementById('user-req-count').innerText = (data.total_requests || 0) + "건";
+                document.getElementById('u-input').innerText = (data.input_tokens || 0).toLocaleString();
+                document.getElementById('u-output').innerText = (data.output_tokens || 0).toLocaleString();
 
-                // 일 평균 토큰 및 일 평균 요청 실시간 연동 로직
-                const activeDays = 1; // 기본 활성 일수 기준
-                const avgTokens = Math.round(data.today_tokens / activeDays);
-                const avgRequests = (data.total_requests / activeDays).toFixed(1);
+                // 1. 회당 평균 토큰 계산 (총 토큰 / 총 요청 건수)
+                const reqCount = data.total_requests || 0;
+                const perReqTokens = reqCount > 0 ? Math.round(data.today_tokens / reqCount) : 0;
+                document.getElementById('user-per-req-tokens').innerText = perReqTokens.toLocaleString();
 
-                document.getElementById('user-avg-tokens').innerText = avgTokens.toLocaleString();
-                document.getElementById('user-avg-requests').innerText = avgRequests + "건";
+                // 2. 주간 일 평균 토큰 계산 (최근 7일 기준)
+                const weeklyAvgTokens = Math.round((data.weekly_tokens || 0) / 7);
+                document.getElementById('user-avg-tokens').innerText = weeklyAvgTokens.toLocaleString();
 
                 if (chartInstance && data.daily_usage) {
                     chartInstance.data.datasets[0].data = data.daily_usage;
