@@ -393,6 +393,8 @@ async def _register_notion_events(chat_log: str, today: str) -> list[str]:
 
     for event in events:
         try:
+            # 날짜 계산은 여기서 한다. 모델은 "다음 주 화요일"을 분류만 했다.
+            event = notion_service.prepare_reserved_event(event, today)
             url = await notion_service.create_calendar_event(event)
         except notion_service.NotionWriteError as exc:
             logger.warning("노션 일정 등록 건너뜀: %s", exc)
@@ -403,10 +405,26 @@ async def _register_notion_events(chat_log: str, today: str) -> list[str]:
             skipped.append(f"{event.get('name', '(이름 없음)')} — 등록 중 오류")
             continue
 
-        when = event.get("date", "")
-        time = event.get("time", "")
-        place = event.get("place", "")
-        detail = " / ".join(part for part in (when, time, place) if part)
+        # 요일과 참석자를 함께 보여 준다. 날짜가 틀려도 사용자가 DM만 보고
+        # 알아챌 수 있게 하는 안전장치다("다음 주 화요일"인데 (수)가 찍히면 보인다).
+        start = event.get("date", "")
+        when = f"{start}({notion_service.weekday_label(start)})" if start else ""
+        if event.get("end_date"):
+            end = event["end_date"]
+            when += f" ~ {end}({notion_service.weekday_label(end)})"
+        if start and start < today:
+            when += " · 지난 날짜"
+        attendees = event.get("attendees", "")
+        detail = " / ".join(
+            part
+            for part in (
+                when,
+                event.get("time", ""),
+                event.get("place", ""),
+                f"참석 {attendees}" if attendees else "",
+            )
+            if part
+        )
         registered.append(f" · {event.get('name', '')} / {detail}")
         if url and len(registered) == 1:
             # 링크는 하나만 붙인다. 여러 건이어도 같은 캘린더라 한 번이면 된다.

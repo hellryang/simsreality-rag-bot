@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import date, datetime, timedelta
 from typing import Any, Callable
 
@@ -327,9 +328,11 @@ def is_iso_date(value: str) -> bool:
     노션은 ISO 8601만 받는다. "다음주 화요일" 같은 값을 그대로 넣으면 400이
     나므로, 저장을 시도하기 전에 여기서 거른다.
     """
+    # strptime은 "2026-8-24"처럼 0이 빠진 값도 받아 준다. 그러면 문자열로
+    # 날짜를 비교하는 곳("2026-8-24" > "2026-08-31")이 조용히 틀리고, 노션에도
+    # 형식이 다른 값이 넘어간다. 파싱한 뒤 다시 찍은 모양과 같아야 통과시킨다.
     try:
-        datetime.strptime(value, "%Y-%m-%d")
-        return True
+        return datetime.strptime(value, "%Y-%m-%d").date().isoformat() == value
     except (ValueError, TypeError):
         return False
 
@@ -646,6 +649,144 @@ def is_past_range(end_date: str, today: str) -> bool:
     return bool(end_date) and bool(today) and end_date < today
 
 
+# --- 예약 날짜 계산 --------------------------------------------------
+#
+# 예약하기도 질문하기와 같은 원칙이다. 모델은 날짜 표현을 분류하고 숫자·요일을
+# 옮겨 적기만 하고, 실제 날짜는 여기서 계산한다. 모델이 YYYY-MM-DD를 직접
+# 만들면 형식은 맞는데 날짜가 틀린 값이 노션에 그대로 남는다.
+
+# 노션 캘린더 '유형' select에 실제로 있는 선택지(2026-09-15 조회).
+# 없는 이름을 보내면 노션이 새 선택지를 만들어 버린다.
+CALENDAR_TYPES = (
+    "회의", "정기회의", "외부미팅", "보고", "리뷰", "시연", "시험", "현장조사",
+    "출장", "교육", "행사", "공지", "마일스톤", "휴가", "휴일",
+)
+
+DATE_EXACT = "exact"
+DATE_DAYS_LATER = "days_later"
+_DAY_OFFSETS = {"today": 0, "tomorrow": 1, "day_after_tomorrow": 2}
+_WEEK_OFFSETS = {"this_week": 0, "next_week": 7, "week_after_next": 14}
+DATE_TYPES = (DATE_EXACT, *_DAY_OFFSETS, DATE_DAYS_LATER, *_WEEK_OFFSETS)
+
+
+def _to_int(value: Any) -> int | None:
+    """모델이 숫자를 "25"처럼 문자열로 줄 때도 받는다. 못 읽으면 None."""
+    if isinstance(value, bool) or value in (None, ""):
+        return None
+    try:
+        return int(str(value).strip())
+    except ValueError:
+        return None
+
+
+def _weekday_index(value: Any) -> int | None:
+    """"화", "화요일" → 1. 못 읽으면 None."""
+    text = str(value or "").strip()
+    if not text or text[0] not in _WEEKDAYS:
+        return None
+    return _WEEKDAYS.index(text[0])
+
+
+def weekday_label(iso_date: str) -> str:
+    """"2026-09-22" → "화". 형식이 틀리면 빈 문자열."""
+    if not is_iso_date(iso_date):
+        return ""
+    return _WEEKDAYS[datetime.strptime(iso_date, "%Y-%m-%d").date().weekday()]
+
+
+def _month_day(year: Any, month: Any, day: Any, not_before: date) -> date:
+    """월·일(과 연도)을 날짜로. 연도가 없으면 not_before 이후로 가장 가까운 해.
+
+    9월에 "1월 5일"을 예약하면 올해 1월은 이미 지났으므로 내년 1월 5일이다.
+    """
+    m, d, y = _to_int(month), _to_int(day), _to_int(year)
+    if m is None or d is None:
+        raise NotionWriteError("날짜(월·일)를 알아볼 수 없습니다.")
+    try:
+        if y is not None:
+            return date(y, m, d)
+        candidate = date(not_before.year, m, d)
+        if candidate < not_before:
+            candidate = date(not_before.year + 1, m, d)
+        return candidate
+    except ValueError:
+        raise NotionWriteError(f"없는 날짜입니다: {m}월 {d}일") from None
+
+
+def resolve_event_date(spec: dict[str, Any], today: str) -> tuple[str, str]:
+    """모델이 분류한 날짜 표현을 (시작일, 종료일)로 계산한다.
+
+    Args:
+        spec: date_type과 그에 딸린 값.
+            exact              month, day, (year)   "9월 25일"
+            today/tomorrow/day_after_tomorrow        "내일", "모레"
+            days_later         days                 "3일 뒤"
+            this_week/next_week/week_after_next  weekday  "다음 주 화요일"
+            종료일(선택)       end_month, end_day, (end_year) 또는 end_weekday
+        today: 오늘 날짜(YYYY-MM-DD).
+
+    Returns:
+        ("2026-09-22", "") 종료일이 없거나 시작일보다 앞서면 빈 문자열.
+
+    Raises:
+        NotionWriteError: 날짜를 계산할 수 없을 때. 사용자에게 그대로 보인다.
+    """
+    if not is_iso_date(today):
+        raise NotionWriteError(f"오늘 날짜가 올바르지 않습니다: {today}")
+    base = datetime.strptime(today, "%Y-%m-%d").date()
+    monday = base - timedelta(days=base.weekday())
+    kind = str(spec.get("date_type") or "").strip()
+
+    if kind == DATE_EXACT:
+        start = _month_day(spec.get("year"), spec.get("month"), spec.get("day"), base)
+    elif kind in _DAY_OFFSETS:
+        start = base + timedelta(days=_DAY_OFFSETS[kind])
+    elif kind == DATE_DAYS_LATER:
+        days = _to_int(spec.get("days"))
+        if days is None or not 0 <= days <= 366:
+            raise NotionWriteError("며칠 뒤인지 알아볼 수 없습니다.")
+        start = base + timedelta(days=days)
+    elif kind in _WEEK_OFFSETS:
+        index = _weekday_index(spec.get("weekday"))
+        if index is None:
+            raise NotionWriteError("요일을 알아볼 수 없습니다.")
+        start = monday + timedelta(days=_WEEK_OFFSETS[kind] + index)
+    else:
+        raise NotionWriteError(f"날짜 표현을 알아볼 수 없습니다: {kind or '(없음)'}")
+
+    end: date | None = None
+    if _to_int(spec.get("end_day")) is not None:
+        # "25일부터 27일까지"처럼 달을 생략하면 시작일의 달이다.
+        end_month = spec.get("end_month") or start.month
+        end = _month_day(spec.get("end_year"), end_month, spec.get("end_day"), start)
+    elif kind in _WEEK_OFFSETS and _weekday_index(spec.get("end_weekday")) is not None:
+        # "다음 주 월요일부터 수요일까지" - 같은 주의 요일
+        end = monday + timedelta(
+            days=_WEEK_OFFSETS[kind] + _weekday_index(spec.get("end_weekday"))
+        )
+
+    if end is not None and end <= start:
+        end = None
+    return start.isoformat(), end.isoformat() if end else ""
+
+
+def prepare_reserved_event(event: dict[str, Any], today: str) -> dict[str, Any]:
+    """모델이 뽑은 일정 한 건을 노션에 넣을 수 있는 모양으로 만든다.
+
+    date_type이 있으면 날짜를 계산해 date/end_date를 채운다. 유형이 선택지에
+    없으면 비운다(새 선택지가 생기지 않게). 원본 dict는 바꾸지 않는다.
+    """
+    prepared = dict(event)
+    if prepared.get("date_type"):
+        prepared["date"], prepared["end_date"] = resolve_event_date(prepared, today)
+
+    kind = _field(prepared, "type")
+    if kind and kind not in CALENDAR_TYPES:
+        logger.info("유형 '%s'은 캘린더 선택지에 없어 비웁니다.", kind)
+        prepared["type"] = ""
+    return prepared
+
+
 # --- 데이터 소스 해석 ------------------------------------------------
 #
 # Notion API가 2025-09-03 버전에서 **데이터 소스(data source)** 개념을 도입했다.
@@ -907,6 +1048,129 @@ def compute_free_days(
         weekday = _WEEKDAYS[datetime.strptime(day, "%Y-%m-%d").date().weekday()]
         free.append({"date": day, "weekday": weekday})
     return free
+
+
+# --- 시간대 단위 가능 여부 -------------------------------------------
+#
+# 빈 날(compute_free_days)은 일정이 하나라도 있으면 그 날을 뺀다. 그러면
+# 10시 회의 하나 있는 날도 "회의 불가"처럼 보인다. 사용자가 원한 답은
+# "9/1은 10~11시 제외 가능"이다. 그래서 날마다 잡힌 시간을 모아 돌려준다.
+
+# 노션 '시간' 칸에서 확인한 형식: "09:30-10:00", "15:00~18:00", "15:00", "18:30-"
+_TIME_RANGE = re.compile(
+    r"^\s*(\d{1,2}):(\d{2})\s*(?:[-~–]\s*(?:(\d{1,2}):(\d{2}))?\s*)?$"
+)
+
+
+def parse_time_range(text: str) -> tuple[str, str] | None:
+    """'시간' 칸을 (시작, 끝)으로 읽는다. 끝을 모르면 끝은 빈 문자열.
+
+    Returns:
+        ("09:30", "10:00") / ("15:00", "") / 읽을 수 없거나 비었으면 None.
+    """
+    match = _TIME_RANGE.match(text or "")
+    if not match:
+        return None
+    start_h, start_m, end_h, end_m = match.groups()
+    if int(start_h) > 23 or int(start_m) > 59:
+        return None
+    start = f"{int(start_h):02d}:{start_m}"
+
+    end = ""
+    if end_h is not None:
+        if int(end_h) > 24 or int(end_m) > 59:
+            return None
+        end = f"{int(end_h):02d}:{end_m}"
+        # 끝이 시작보다 앞서면 오타다. 끝을 모르는 것으로 본다.
+        if end <= start:
+            end = ""
+    return start, end
+
+
+def _merge_slots(slots: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """겹치거나 맞닿은 시간대를 합친다. 끝을 모르는 시간대는 합치지 않는다.
+
+    09:00-17:00 출장과 10:00-11:00 회의가 같은 날이면 09:00~17:00 하나다.
+    "HH:MM"은 0으로 채워져 있어 문자열 비교가 곧 시간 비교다.
+    """
+    closed = sorted((s, e) for s, e in slots if e)
+    merged: list[tuple[str, str]] = []
+    for start, end in closed:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    open_ended = [(start, "") for start in sorted({s for s, e in slots if not e})]
+    return sorted(merged + open_ended)
+
+
+def compute_day_availability(
+    start_date: str, end_date: str, events: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """기간의 날마다 가능 여부를 계산한다.
+
+    Returns:
+        날짜 순 목록. 각 항목:
+          date, weekday
+          status  "free"    일정 없음 - 전일 가능
+                  "partial" 시간이 적힌 일정만 있음 - 그 시간 빼면 가능
+                  "unknown" 시간이 안 적힌 일정이 있음 - 단정할 수 없음
+          busy    합친 시간대 [("10:00", "11:00"), ("15:00", "")]
+          names   시간이 적힌 일정 이름
+          untimed 시간이 안 적힌 일정 이름
+
+    여러 날에 걸친 일정은 걸친 날마다 같은 시간(또는 시간 미기재)으로 본다.
+    """
+    per_day: dict[str, dict[str, list]] = {
+        day: {"slots": [], "names": [], "untimed": []}
+        for day in _date_range(start_date, end_date)
+    }
+
+    for event in events:
+        first = (event.get("date") or "")[:10]
+        if not first:
+            continue
+        last = (event.get("end_date") or "")[:10] or first
+        if last < first:
+            last = first
+        try:
+            span = _date_range(first, last)
+        except ValueError:
+            logger.warning("캘린더에 형식이 이상한 날짜: %s", first)
+            continue
+
+        name = event.get("name") or "(이름 없음)"
+        slot = parse_time_range(event.get("time") or "")
+        for day in span:
+            info = per_day.get(day)
+            if info is None:
+                continue
+            if slot is None:
+                info["untimed"].append(name)
+            else:
+                info["slots"].append(slot)
+                if name not in info["names"]:
+                    info["names"].append(name)
+
+    result: list[dict[str, Any]] = []
+    for day, info in per_day.items():
+        if info["untimed"]:
+            status = "unknown"
+        elif info["slots"]:
+            status = "partial"
+        else:
+            status = "free"
+        result.append(
+            {
+                "date": day,
+                "weekday": _WEEKDAYS[datetime.strptime(day, "%Y-%m-%d").date().weekday()],
+                "status": status,
+                "busy": _merge_slots(info["slots"]),
+                "names": info["names"],
+                "untimed": info["untimed"],
+            }
+        )
+    return result
 
 
 if __name__ == "__main__":

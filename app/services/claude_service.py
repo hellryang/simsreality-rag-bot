@@ -15,6 +15,7 @@ import anthropic
 
 from app.core.config import settings
 from app.models.schemas import NO_CONTEXT_ANSWER, Answer, Chunk, Citation, SearchHit
+from app.services.notion_service import CALENDAR_TYPES
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,7 @@ def build_system_prompt(today: str = "") -> str:
         "\n"
         "\n"
         f"오늘은 {today}이다. '내일', '다음주', '이번 달' 같은 상대 표현은 "
-        "이 날짜를 기준으로 계산한다.\n"
+        "따로 기준일을 말하지 않는 한 이 날짜를 기준으로 한다.\n"
         "\n"
         "일정 관련 규칙:\n"
         "5. 일정에 관한 질문이면 lookup_calendar 도구로 노션 캘린더를 먼저 "
@@ -85,9 +86,13 @@ def build_system_prompt(today: str = "") -> str:
         "5-1. 도구의 period에는 '저번 주'->last_week처럼 **라벨만** 고른다. "
         "그 기간이 며칠부터 며칠까지인지는 직접 계산하지 않는다. "
         "사용자가 날짜를 직접 말한 경우에만 custom을 쓴다.\n"
+        "5-2. '8/24 기준 다음 주'처럼 오늘이 아닌 기준일이 있으면 period는 "
+        "라벨(next_week)로 고르고 base_date에 그 기준일을 YYYY-MM-DD로 적는다. "
+        "기준일을 빠뜨리면 오늘 기준으로 엉뚱한 기간이 조회된다.\n"
         "6. 도구가 돌려준 결과는 확인된 사실이므로 그대로 근거로 쓴다. "
         "이때는 출처 번호를 붙이지 않고, 규칙 3의 '근거 없음'에도 해당하지 않는다.\n"
-        "7. 도구가 '일정이 없는 날'을 알려주면 그 목록을 그대로 전한다. "
+        "7. 도구가 날짜별 가능 여부(전일 가능 / 일부 시간 가능 / 확인 필요)를 "
+        "알려주면 그 묶음대로 전한다. 일부 시간 가능인 날은 제외할 시간을 함께 적는다. "
         "날짜를 직접 계산하거나 빼거나 더하지 않는다.\n"
         "8. 도구가 조회에 실패했다고 하면 실패했다고 알린다. 임의로 답하지 않는다.\n"
         "9. 조회 결과에서 찾지 못했고 더 넓은 기간을 볼 필요가 있으면, "
@@ -243,7 +248,21 @@ CALENDAR_TOOL: dict = {
                     "사람 이름·장소·프로젝트로 일정을 찾는 질문 → past_3_months 또는 "
                     "around_3_months. 한 달짜리 라벨로 찍어 맞히려 하면 놓친다. "
                     "'9월 15일부터 20일까지'처럼 날짜를 직접 말한 경우에만 custom. "
-                    "**날짜를 직접 계산하지 말고 라벨만 고른다.**"
+                    "**날짜를 직접 계산하지 말고 라벨만 고른다.** "
+                    "'8/24 기준 다음 주'처럼 오늘이 아닌 날을 기준으로 말하면 "
+                    "custom으로 날짜를 계산하지 말고, 같은 라벨(next_week)을 고른 뒤 "
+                    "base_date에 기준일을 적는다."
+                ),
+            },
+            "base_date": {
+                "type": "string",
+                "description": (
+                    "라벨을 계산할 기준일. YYYY-MM-DD. 비우면 오늘이 기준이다. "
+                    "사용자가 '8/24 기준', '8월 20일로부터'처럼 기준이 되는 "
+                    "날짜를 말했을 때만 채운다. 그 날짜를 형식에 맞춰 옮겨 적기만 "
+                    "하고 더하거나 빼지 않는다. "
+                    "예: '8/24 기준 다음 주' -> period=next_week, base_date=2026-08-24. "
+                    "연도를 말하지 않으면 오늘의 연도를 쓴다."
                 ),
             },
             "keyword": {
@@ -270,6 +289,57 @@ CALENDAR_TOOL: dict = {
 }
 
 
+def _slot_text(slot: tuple[str, str]) -> str:
+    start, end = slot
+    return f"{start}~{end}" if end else f"{start}~(끝 시간 미기재)"
+
+
+def _availability_lines(days: list[dict], keyword: str = "") -> list[str]:
+    """날짜별 가능 여부를 세 묶음으로 적는다.
+
+    "9/1은 10~11시 제외 가능"처럼 답하려면 시간을 비교해야 하는데, 그건
+    계산이라 여기서 끝낸다. 모델은 묶음을 읽어 옮기기만 한다.
+
+    묶음 이름에 '가능'을 못 박는 이유: 예전에 "선약 있음"과 "비어 있음"
+    줄을 모델이 뒤집어 읽어 참여 가능한 날을 거꾸로 답한 적이 있다.
+    """
+    who = f"{keyword} " if keyword else ""
+    free = [d for d in days if d["status"] == "free"]
+    partial = [d for d in days if d["status"] == "partial"]
+    unknown = [d for d in days if d["status"] == "unknown"]
+
+    lines: list[str] = []
+    if free:
+        labels = ", ".join(f"{d['date']}({d['weekday']})" for d in free)
+        lines.append(f"[전일 가능 - {who}일정 없음] {len(free)}일: {labels}")
+    else:
+        lines.append(f"[전일 가능 - {who}일정 없음]: 없음 (조회 기간 내내 일정이 있다)")
+
+    if partial:
+        lines.append(f"[일부 시간 가능 - {who}아래 시간에만 일정, 그 시간을 빼면 가능]")
+        for d in partial:
+            slots = ", ".join(_slot_text(slot) for slot in d["busy"])
+            lines.append(
+                f"  {d['date']}({d['weekday']}): {slots} 제외 가능 ({', '.join(d['names'])})"
+            )
+
+    if unknown:
+        lines.append(
+            f"[확인 필요 - {who}시간이 안 적힌 일정이 있어 가능 여부를 단정할 수 없음]"
+        )
+        for d in unknown:
+            detail = ", ".join(d["untimed"]) + " (시간 미기재)"
+            if d["busy"]:
+                detail += " / 그 외 " + ", ".join(_slot_text(slot) for slot in d["busy"])
+            lines.append(f"  {d['date']}({d['weekday']}): {detail}")
+
+    lines.append(
+        "가능한 날을 물으면 위 묶음대로 답한다. '일부 시간 가능'인 날은 전일 가능과 "
+        "섞지 말고 제외할 시간을 함께 적는다. '확인 필요'인 날을 가능하다고 단정하지 않는다."
+    )
+    return lines
+
+
 async def _run_calendar_tool(tool_input: dict, today: str) -> str:
     """lookup_calendar 도구를 실제로 수행하고 결과를 문자열로 돌려준다.
 
@@ -283,10 +353,21 @@ async def _run_calendar_tool(tool_input: dict, today: str) -> str:
     """
     from app.services import notion_service
 
+    # 기준일. 비어 있으면 오늘이다. 값이 있는데 형식이 틀리면 오늘로 대신하지
+    # **않는다** - 그러면 "8/24 기준"을 물었는데 9월이 조회되는, 바로 이 기능이
+    # 막으려던 오류가 조용히 재현된다. 실패로 돌려주면 모델이 고쳐 다시 부른다.
+    base_date = str(tool_input.get("base_date", "") or "").strip()
+    if base_date and not notion_service.is_iso_date(base_date):
+        return (
+            f"조회 실패: 기준일(base_date)은 YYYY-MM-DD 형식이어야 한다. "
+            f"받은 값: {base_date}. 형식을 고쳐 다시 호출할 것."
+        )
+    anchor = base_date or today
+
     try:
         start, end = notion_service.resolve_period(
             str(tool_input.get("period", "")).strip(),
-            today,
+            anchor,
             str(tool_input.get("start_date", "")).strip(),
             str(tool_input.get("end_date", "")).strip(),
         )
@@ -297,15 +378,11 @@ async def _run_calendar_tool(tool_input: dict, today: str) -> str:
 
     try:
         events = await notion_service.query_calendar_events(start, end)
-        # 전체 일정 기준의 빈 날. "아무 일정도 없는 날"을 묻는 질문에 쓴다.
-        free_days = notion_service.compute_free_days(start, end, events)
-        matched_free_days: list[dict[str, str]] = []
         if keyword:
+            # 걸러낸 목록으로 계산하면 "그 사람(키워드)이 되는 시간"이 된다.
+            # 전체가 비어야 가능한 게 아니라 그 사람만 비어 있으면 된다.
             events = notion_service.filter_events(events, keyword)
-            # 걸러낸 목록 기준의 빈 날 = 그 사람(키워드)이 비어 있는 날.
-            # "이후경이 참여 가능한 날"이 바로 이것이다. 전체가 비어야
-            # 가능한 게 아니라 그 사람만 비어 있으면 된다.
-            matched_free_days = notion_service.compute_free_days(start, end, events)
+        days = notion_service.compute_day_availability(start, end, events)
     except notion_service.NotionWriteError as exc:
         return f"조회 실패: {exc}"
     except Exception:
@@ -313,6 +390,8 @@ async def _run_calendar_tool(tool_input: dict, today: str) -> str:
         return "조회 실패: 캘린더를 읽는 중 오류가 발생했습니다."
 
     lines = [f"조회 기간: {start} ~ {end} (오늘은 {today})"]
+    if base_date and base_date != today:
+        lines.append(f"기준일: {base_date} (이 날짜를 기준으로 기간을 계산했다)")
     if keyword:
         lines.append(f"'{keyword}'가 포함된 일정만 골랐다.")
     if notion_service.is_past_range(end, today):
@@ -351,36 +430,7 @@ async def _run_calendar_tool(tool_input: dict, today: str) -> str:
         if event.get("url"):
             lines.append(f"      {event['url']}")
 
-    if keyword:
-        # 그 키워드 기준으로 비어 있는 날 = 참여·예약이 가능한 날.
-        # 전체 일정 기준 빈 날(free_days)은 여기서 내보내지 않는다. 수십 일치
-        # 날짜가 겹쳐 붙으면 정작 찾는 일정이 묻힌다.
-        busy = sorted({event["date"] for event in events if event.get("date")})
-        if busy:
-            lines.append(
-                f"[{keyword} 선약 있음 - 이 날은 시간이 안 된다]: {', '.join(busy)}"
-            )
-        if matched_free_days:
-            labels = ", ".join(
-                f"{d['date']}({d['weekday']})" for d in matched_free_days
-            )
-            lines.append(
-                f"[{keyword} 일정 비어 있음 - 시간이 되는 날, 참여·예약 가능]"
-                f" {len(matched_free_days)}일: {labels}"
-            )
-        else:
-            lines.append(
-                f"[{keyword} 일정 비어 있음]: 없음 (조회 기간 내내 선약이 있다)"
-            )
-        lines.append(
-            "위 두 줄을 뒤집어 읽지 말 것. '언제 시간이 되나'·'참여 가능한 날'을"
-            " 물으면 '비어 있음' 줄을 답한다."
-        )
-    elif free_days:
-        labels = ", ".join(f"{d['date']}({d['weekday']})" for d in free_days)
-        lines.append(f"일정이 없는 날 {len(free_days)}일: {labels}")
-    else:
-        lines.append("일정이 없는 날: 없음 (모든 날에 일정이 있음)")
+    lines.extend(_availability_lines(days, keyword))
 
     return "\n".join(lines)
 
@@ -578,7 +628,9 @@ def _keep_cited_only(text: str, citations: list[Citation]) -> tuple[str, list[Ci
 SCHEDULE_TOOL: dict = {
     "name": "register_schedule",
     "description": (
-        "대화 내용에서 찾아낸 일정을 노션 캘린더에 등록한다. "
+        "사용자가 적은 문장에서 일정을 찾아 노션 캘린더에 등록한다. "
+        "날짜는 계산하지 말고 date_type으로 분류한 뒤 문장에 있는 숫자·요일만 "
+        "옮겨 적는다. 실제 날짜는 프로그램이 계산한다. "
         "일정이 하나도 없으면 events를 빈 배열로 돌려준다."
     ),
     "input_schema": {
@@ -586,18 +638,66 @@ SCHEDULE_TOOL: dict = {
         "properties": {
             "events": {
                 "type": "array",
-                "description": "대화에서 찾은 일정 목록. 없으면 빈 배열.",
+                "description": "문장에서 찾은 일정 목록. 없으면 빈 배열.",
                 "items": {
                     "type": "object",
                     "properties": {
                         "name": {"type": "string", "description": "일정 이름"},
-                        "date": {
+                        "date_type": {
                             "type": "string",
-                            "description": "시작 날짜. 반드시 YYYY-MM-DD 형식.",
+                            "enum": [
+                                "exact",
+                                "today",
+                                "tomorrow",
+                                "day_after_tomorrow",
+                                "days_later",
+                                "this_week",
+                                "next_week",
+                                "week_after_next",
+                            ],
+                            "description": (
+                                "날짜 표현의 종류. '9월 25일'·'9/25'->exact(month, day), "
+                                "'오늘'->today, '내일'->tomorrow, '모레'(내일의 다음 날, 이틀 뒤)->day_after_tomorrow, "
+                                "'3일 뒤'->days_later(days), '이번 주 금요일'->this_week(weekday), "
+                                "'다음 주 화요일'·'차주 화요일'->next_week(weekday), "
+                                "'다다음 주 월요일'->week_after_next(weekday). "
+                                "**날짜를 직접 계산하지 않는다.**"
+                            ),
                         },
-                        "end_date": {
+                        "year": {
+                            "type": "integer",
+                            "description": "exact일 때, 사용자가 연도를 말한 경우에만.",
+                        },
+                        "month": {"type": "integer", "description": "exact일 때 월(1-12)."},
+                        "day": {"type": "integer", "description": "exact일 때 일(1-31)."},
+                        "days": {
+                            "type": "integer",
+                            "description": "days_later일 때 며칠 뒤인지. '3일 뒤'->3.",
+                        },
+                        "weekday": {
                             "type": "string",
-                            "description": "종료 날짜(여러 날에 걸칠 때만). YYYY-MM-DD.",
+                            "enum": ["월", "화", "수", "목", "금", "토", "일"],
+                            "description": "this_week/next_week/week_after_next일 때 요일.",
+                        },
+                        "end_year": {
+                            "type": "integer",
+                            "description": "여러 날 일정의 종료 연도. 말한 경우에만.",
+                        },
+                        "end_month": {
+                            "type": "integer",
+                            "description": "여러 날 일정의 종료 월. 말하지 않았으면 비운다.",
+                        },
+                        "end_day": {
+                            "type": "integer",
+                            "description": "여러 날 일정의 종료 일. '25일부터 27일까지'->27.",
+                        },
+                        "end_weekday": {
+                            "type": "string",
+                            "enum": ["월", "화", "수", "목", "금", "토", "일"],
+                            "description": (
+                                "주 단위 표현의 여러 날 일정 종료 요일. "
+                                "'다음 주 월요일부터 수요일까지'->수."
+                            ),
                         },
                         "time": {
                             "type": "string",
@@ -610,14 +710,15 @@ SCHEDULE_TOOL: dict = {
                         },
                         "type": {
                             "type": "string",
-                            "description": "유형. 예: 회의, 발표, 마감, 교육",
+                            "enum": list(CALENDAR_TYPES),
+                            "description": "유형. 목록에서 고른다. 맞는 것이 없으면 넣지 않는다.",
                         },
                         "memo": {
                             "type": "string",
                             "description": "일정에 대한 짧은 설명.",
                         },
                     },
-                    "required": ["name", "date"],
+                    "required": ["name", "date_type"],
                 },
             }
         },
@@ -632,17 +733,24 @@ def build_schedule_system_prompt(today: str) -> str:
     답변용(build_system_prompt)과 규칙이 다르다. 저쪽의 핵심이 '인용'이라면
     여기서는 **없는 일정을 지어내지 않는 것**이 핵심이다. 잘못 뽑으면 노션에
     엉뚱한 일정이 등록되고, 사용자는 그게 왜 생겼는지 모른다.
-    """
-    return f"""너는 사내 대화에서 일정을 뽑아내는 도구다.
 
-오늘은 {today}이다. '내일', '다음주 화요일' 같은 상대 표현은 이 날짜를
-기준으로 계산해 YYYY-MM-DD로 바꾼다.
+    날짜 계산은 시키지 않는다. "다음 주 화요일"을 모델이 YYYY-MM-DD로 바꾸면
+    형식은 맞는데 날짜가 틀린 값이 그대로 등록된다. 분류만 받고
+    notion_service.resolve_event_date()가 계산한다.
+    """
+    return f"""너는 사용자가 적은 문장에서 일정을 뽑아내는 도구다.
+
+오늘은 {today}이다. 지나간 일인지 판단할 때만 참고하고, 날짜를 계산하는 데 쓰지 않는다.
 
 규칙:
-1. 대화에 실제로 언급된 일정만 뽑는다. 추측해서 만들지 않는다.
-2. 날짜를 특정할 수 없는 일정은 아예 제외한다. 임의의 날짜를 지어내지 않는다.
+1. 문장에 실제로 언급된 일정만 뽑는다. 추측해서 만들지 않는다.
+2. 날짜 표현이 없는 일정은 제외한다. 임의의 날짜를 지어내지 않는다.
 3. 이미 지나간 일을 회고하는 문장은 일정이 아니다. 앞으로 할 일만 뽑는다.
-4. 일정이 하나도 없으면 events를 빈 배열로 돌려준다."""
+4. 일정이 하나도 없으면 events를 빈 배열로 돌려준다.
+5. 날짜는 절대 YYYY-MM-DD로 계산하지 않는다. date_type으로 분류하고,
+   문장에 있는 월·일·며칠·요일만 옮겨 적는다. 연도는 사용자가 말했을 때만 적는다.
+   '내일'과 '모레'를 구분한다. 모레는 이틀 뒤다(day_after_tomorrow).
+6. 유형은 주어진 목록에서 고른다. 맞는 것이 없으면 비워 둔다."""
 
 
 async def extract_schedule_events(chat_log: str, today: str) -> list[dict]:
@@ -653,7 +761,10 @@ async def extract_schedule_events(chat_log: str, today: str) -> list[dict]:
         today: 오늘 날짜(YYYY-MM-DD). 상대 표현을 계산하는 기준이 된다.
 
     Returns:
-        [{"name","date","time","place","attendees","type","memo"}, ...]
+        [{"name","date_type","month","day","weekday",...,"time","place",
+          "attendees","type","memo"}, ...]
+        날짜는 계산되지 않은 분류 상태다. notion_service.prepare_reserved_event()로
+        실제 날짜를 채운다.
         일정이 없거나 모델이 도구를 쓰지 않으면 빈 목록.
 
     호출하는 쪽에서 날짜 형식을 **한 번 더 검증해야 한다.** 프롬프트로
