@@ -9,7 +9,8 @@ import sqlite3
 app = FastAPI()
 templates = Jinja2Templates(directory="app/templates")
 
-MONTHLY_TOKEN_LIMIT = 1000000
+# 연간 토큰 한도 설정 (예: 12,000,000 토큰 / 필요시 수치 변경 가능)
+ANNUAL_TOKEN_LIMIT = 12000000
 
 def init_db():
     conn = sqlite3.connect("database.db")
@@ -34,7 +35,7 @@ init_db()
 class ChatRequest(BaseModel):
     user_id: str
     message: str
-    mode: Optional[str] = "USER"  # USER(일반), SUMMARY(메신저 요약), NOTION(노션 연동)
+    mode: Optional[str] = "USER"
 
 @app.get("/admin", response_class=HTMLResponse)
 async def read_admin(request: Request):
@@ -58,7 +59,6 @@ async def get_tokens():
     output_tok = row[2] or 0
     req_count = row[3] or 0
     
-    # 유형별 건수 조회 (SUMMARY, NOTION)
     cursor.execute("SELECT COUNT(*) FROM logs WHERE mode = 'SUMMARY'")
     summary_count = cursor.fetchone()[0] or 0
     
@@ -67,24 +67,26 @@ async def get_tokens():
     
     conn.close()
     
-    # 퍼센트 계산
     summary_percent = round((summary_count / req_count) * 100) if req_count > 0 else 0
     notion_percent = round((notion_count / req_count) * 100) if req_count > 0 else 0
     
-    remaining_tokens = max(0, MONTHLY_TOKEN_LIMIT - total_tok)
-    usage_percentage = round((total_tok / MONTHLY_TOKEN_LIMIT) * 100, 1) if MONTHLY_TOKEN_LIMIT > 0 else 0
+    # 연간 토큰 관련 계산
+    annual_tokens = total_tok  # 누적 사용 토큰
+    remaining_annual_tokens = max(0, ANNUAL_TOKEN_LIMIT - annual_tokens)
+    annual_usage_percentage = round((annual_tokens / ANNUAL_TOKEN_LIMIT) * 100, 1) if ANNUAL_TOKEN_LIMIT > 0 else 0
     
     return {
         "today_tokens": total_tok,
         "weekly_tokens": total_tok,
         "monthly_tokens": total_tok,
+        "annual_tokens": annual_tokens,
+        "annual_limit": ANNUAL_TOKEN_LIMIT,
+        "remaining_annual_tokens": remaining_annual_tokens,
+        "annual_usage_percentage": annual_usage_percentage,
         "total_requests": req_count,
         "input_tokens": input_tok,
         "output_tokens": output_tok,
         "daily_usage": [0, 0, 0, 0, 0, 0, total_tok],
-        "monthly_limit": MONTHLY_TOKEN_LIMIT,
-        "remaining_tokens": remaining_tokens,
-        "usage_percentage": usage_percentage,
         "summary_count": summary_count,
         "summary_percent": summary_percent,
         "notion_count": notion_count,

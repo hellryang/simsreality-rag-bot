@@ -71,17 +71,17 @@
     <div class="title-area">
         <div>
             <h1>관리자 대시보드</h1>
-            <p>카카오워크 AI 봇 · 실시간 요청 및 남은 토큰 현황</p>
+            <p>카카오워크 AI 봇 · 실시간 요청 및 연간 토큰 현황</p>
         </div>
         <div class="status-badge">● 실시간 연동 중</div>
     </div>
 
-    <!-- 상단 지표 카드 -->
+    <!-- 상단 지표 카드 (연간 토큰량 반영) -->
     <div class="metrics-grid">
-        <div class="card" style="border-left: 4px solid var(--accent-green);">
-            <div class="card-label">남은 토큰량 (잔여)</div>
-            <div class="card-value" id="remaining-tokens" style="color: var(--accent-green);">1,000,000</div>
-            <div class="card-sub" id="remaining-sub">월 한도: 1,000,000 토큰 (100% 남음)</div>
+        <div class="card" style="border-left: 4px solid var(--accent-purple);">
+            <div class="card-label">연간 누적 토큰 사용량</div>
+            <div class="card-value" id="annual-tokens" style="color: #818CF8;">0</div>
+            <div class="card-sub" id="annual-sub">연간 한도: 12,000,000 토큰 중 0.0% 사용</div>
         </div>
         <div class="card">
             <div class="card-label">금일 토큰 사용량</div>
@@ -127,7 +127,7 @@
                 </div>
             </div>
 
-            <!-- 유형별 질의 분포 (실시간 연동 적용) -->
+            <!-- 유형별 질의 분포 -->
             <div class="chart-card">
                 <h3 style="font-size: 15px; margin-bottom: 12px;">유형별 질의 분포</h3>
                 <div class="category-grid">
@@ -147,15 +147,15 @@
             </div>
         </div>
 
-        <!-- 우측 영역 -->
+        <!-- 우측 영역 (연간 토큰 한도 기준) -->
         <div>
             <div class="side-card">
-                <h3 style="font-size: 15px; margin-bottom: 12px;">Claude API 잔여 한도</h3>
-                <div class="info-row"><span>월 한도량</span><span id="side-limit" style="font-weight:bold;">1,000,000</span></div>
-                <div class="info-row"><span>사용한 토큰</span><span id="side-used" style="color:#F59E0B; font-weight:bold;">0</span></div>
-                <div class="info-row"><span>남은 잔여 토큰</span><span id="side-rem" style="color:#10B981; font-weight:bold;">1,000,000</span></div>
+                <h3 style="font-size: 15px; margin-bottom: 12px;">Claude API 연간 한도</h3>
+                <div class="info-row"><span>연간 한도량</span><span id="side-limit" style="font-weight:bold;">12,000,000</span></div>
+                <div class="info-row"><span>연간 사용 토큰</span><span id="side-used" style="color:#F59E0B; font-weight:bold;">0</span></div>
+                <div class="info-row"><span>연간 잔여 토큰</span><span id="side-rem" style="color:#10B981; font-weight:bold;">12,000,000</span></div>
                 <div class="progress-bar" style="margin-top:14px;">
-                    <div class="progress-fill" id="limit-bar" style="width: 100%; background: #10B981;"></div>
+                    <div class="progress-fill" id="limit-bar" style="width: 0%; background: #818CF8;"></div>
                 </div>
             </div>
 
@@ -197,10 +197,13 @@
                 const tokenRes = await fetch('/api/tokens');
                 const data = await tokenRes.json();
 
-                // 상단 지표 카드 연동
-                document.getElementById('remaining-tokens').innerText = (data.remaining_tokens || 0).toLocaleString();
-                const remPercent = (100 - (data.usage_percentage || 0)).toFixed(1);
-                document.getElementById('remaining-sub').innerText = `월 한도: ${(data.monthly_limit || 0).toLocaleString()} 토큰 (${remPercent}% 남음)`;
+                // 연간 토큰 지표 카드 연동
+                const annualTokens = data.annual_tokens || 0;
+                const annualLimit = data.annual_limit || 12000000;
+                const usagePercent = data.annual_usage_percentage || 0;
+
+                document.getElementById('annual-tokens').innerText = annualTokens.toLocaleString();
+                document.getElementById('annual-sub').innerText = `연간 한도: ${annualLimit.toLocaleString()} 토큰 중 ${usagePercent}% 사용`;
 
                 document.getElementById('today-tokens').innerText = (data.today_tokens || 0).toLocaleString();
                 document.getElementById('monthly-tokens').innerText = (data.monthly_tokens || 0).toLocaleString();
@@ -212,16 +215,16 @@
                 document.getElementById('footer-in').innerText = (data.input_tokens || 0).toLocaleString();
                 document.getElementById('footer-out').innerText = (data.output_tokens || 0).toLocaleString();
 
-                document.getElementById('side-limit').innerText = (data.monthly_limit || 0).toLocaleString();
-                document.getElementById('side-used').innerText = (data.monthly_tokens || 0).toLocaleString();
-                document.getElementById('side-rem').innerText = (data.remaining_tokens || 0).toLocaleString();
-                document.getElementById('limit-bar').style.width = remPercent + "%";
+                document.getElementById('side-limit').innerText = annualLimit.toLocaleString();
+                document.getElementById('side-used').innerText = annualTokens.toLocaleString();
+                document.getElementById('side-rem').innerText = (data.remaining_annual_tokens || 0).toLocaleString();
+                document.getElementById('limit-bar').style.width = usagePercent + "%";
 
                 document.getElementById('side-input').innerText = (data.input_tokens || 0).toLocaleString();
                 document.getElementById('side-output').innerText = (data.output_tokens || 0).toLocaleString();
                 document.getElementById('side-total').innerText = (data.today_tokens || 0).toLocaleString();
 
-                // 유형별 질의 분포 연동 (메신저 요약, 노션 연동)
+                // 유형별 질의 분포 연동
                 document.getElementById('summary-percent').innerText = (data.summary_percent || 0) + "%";
                 document.getElementById('summary-count').innerText = (data.summary_count || 0) + "건 (이번 주)";
                 document.getElementById('summary-bar').style.width = (data.summary_percent || 0) + "%";
