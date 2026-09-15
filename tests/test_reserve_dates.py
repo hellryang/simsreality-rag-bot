@@ -200,8 +200,12 @@ async def test_the_dm_shows_weekday_attendees_and_the_computed_date(monkeypatch)
         created.append(event)
         return "https://notion.so/page-1"
 
+    async def no_events(start, end, database_id=None):
+        return []
+
     monkeypatch.setattr(kakao_events.claude_service, "extract_schedule_events", extracted)
     monkeypatch.setattr(kakao_events.notion_service, "create_calendar_event", fake_create)
+    monkeypatch.setattr(kakao_events.notion_service, "query_calendar_events", no_events)
 
     lines = await kakao_events._register_notion_events("다음 주 화요일 3시 킥오프", TODAY)
     joined = "\n".join(lines)

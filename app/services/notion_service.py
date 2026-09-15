@@ -544,10 +544,6 @@ PERIOD_LABELS = (
     PERIOD_CUSTOM,
 )
 
-# 기간을 특정할 수 없을 때 볼 범위. "회의 가능한 날 알려줘"처럼 기간 언급이
-# 없는 질문에 쓴다. 오늘부터 2주면 일정 잡기에 대체로 충분하다.
-DEFAULT_LOOKAHEAD_DAYS = 13
-
 
 def _month_end(day: date) -> date:
     """그 달의 마지막 날."""
@@ -1171,6 +1167,105 @@ def compute_day_availability(
             }
         )
     return result
+
+
+# --- 예약 겹침 확인 --------------------------------------------------
+#
+# 예약할 때 같은 시간에 같은 사람이 이미 다른 일정에 들어가 있으면 알린다.
+# 등록은 막지 않는다(사용자 결정). 사람이 겹치지 않으면 같은 시간이어도
+# 알리지 않는다 - 회의실이 아니라 사람의 일정이 겹치는 게 문제이기 때문이다.
+
+# 끝 시간이 없는 일정("14:00", "18:30-")은 이만큼 이어진다고 본다.
+DEFAULT_SLOT_MINUTES = 60
+
+# 이름 뒤에 붙는 직함. 참석자 비교에서 이름으로 치지 않는다.
+# "홍길동 상무"와 "홍길동(태원전장)"이 같은 사람으로 비교되게 한다.
+_TITLES = {
+    "님", "대표", "대표님", "상무", "상무님", "전무", "이사", "사장", "부사장",
+    "부장", "차장", "과장", "대리", "주임", "사원", "팀장", "실장", "본부장",
+    "센터장", "매니저", "책임", "선임", "수석", "연구원", "교수", "박사",
+}
+
+
+def attendee_names(text: str) -> set[str]:
+    """참석자 칸을 이름 집합으로 바꾼다.
+
+    "김민준,이후경" / "김민준, 이후경" / "김민준 이후경" / "홍길동(태원전장)" /
+    "김명환 대표님" 을 모두 받는다. 괄호 안(소속)과 직함은 버린다.
+    """
+    cleaned = re.sub(r"\([^)]*\)", " ", text or "")
+    names: set[str] = set()
+    for token in re.split(r"[,，、·/\s]+", cleaned):
+        token = token.strip()
+        if token.endswith("님") and len(token) > 2:
+            token = token[:-1]
+        if len(token) < 2 or token in _TITLES:
+            continue
+        names.add(token)
+    return names
+
+
+def _slot_minutes(time_text: str) -> tuple[int, int] | None:
+    """'시간' 칸을 (시작 분, 끝 분)으로. 시간이 없거나 못 읽으면 None."""
+    slot = parse_time_range(time_text or "")
+    if slot is None:
+        return None
+    start_h, start_m = slot[0].split(":")
+    start = int(start_h) * 60 + int(start_m)
+    if slot[1]:
+        end_h, end_m = slot[1].split(":")
+        end = int(end_h) * 60 + int(end_m)
+    else:
+        end = start + DEFAULT_SLOT_MINUTES
+    return start, end
+
+
+def find_conflicts(
+    event: dict[str, Any], existing: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """새 일정과 참석자·시간이 겹치는 기존 일정을 찾는다.
+
+    Args:
+        event: 등록할 일정. date(필수), end_date, time, attendees.
+        existing: 같은 기간의 기존 일정(parse_calendar_page 형태).
+
+    Returns:
+        [{"event": 기존 일정, "shared": ["김민준"], "kind": "time" | "untimed"}, ...]
+        kind가 "untimed"면 둘 중 하나에 시간이 없어 같은 날이라는 것만 안다.
+
+    겹침 조건: 날짜 범위가 겹치고, 참석자가 한 명 이상 같고,
+    시간이 겹친다(한쪽이라도 시간이 없으면 같은 날이면 겹침으로 본다).
+    끝과 시작이 맞닿기만 한 것(14:00-15:00 뒤의 15:00)은 겹침이 아니다.
+    """
+    names = attendee_names(event.get("attendees", ""))
+    start = (event.get("date") or "")[:10]
+    if not names or not start:
+        return []
+    end = (event.get("end_date") or "")[:10] or start
+    new_slot = _slot_minutes(event.get("time", ""))
+
+    conflicts: list[dict[str, Any]] = []
+    for other in existing:
+        other_start = (other.get("date") or "")[:10]
+        if not other_start:
+            continue
+        other_end = (other.get("end_date") or "")[:10] or other_start
+        if other_end < start or other_start > end:
+            continue
+
+        shared = sorted(names & attendee_names(other.get("attendees", "")))
+        if not shared:
+            continue
+
+        other_slot = _slot_minutes(other.get("time", ""))
+        if new_slot and other_slot:
+            if not (new_slot[0] < other_slot[1] and other_slot[0] < new_slot[1]):
+                continue
+            kind = "time"
+        else:
+            kind = "untimed"
+        conflicts.append({"event": other, "shared": shared, "kind": kind})
+    return conflicts
 
 
 if __name__ == "__main__":

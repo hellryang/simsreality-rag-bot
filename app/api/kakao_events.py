@@ -316,7 +316,7 @@ async def _store_message(conversation_id: str, text: str) -> None:
 
 
 async def _handle_question(user_id: str, question: str) -> None:
-    """질문 → 벡터 검색 → Claude → 출처가 붙은 답변 발송."""
+    """질문 → Claude가 기간 분류 → 노션 캘린더 조회 → 답변 DM 발송."""
     try:
         answer: Answer = await answer_question(question)
         await kakao_service.reply_to_user(user_id, format_answer(answer))
@@ -362,6 +362,44 @@ async def _handle_reserve(user_id: str, text: str, conversation_id: str = "") ->
     await _reply(user_id, conversation_id, "\n".join(lines))
 
 
+async def _find_conflicts(event: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """등록할 일정과 참석자·시간이 겹치는 기존 일정. 확인하지 못하면 None.
+
+    겹침 확인은 부가 기능이다. 노션 조회가 실패해도 등록은 계속한다.
+    """
+    if not notion_service.attendee_names(event.get("attendees", "")):
+        return []  # 비교할 참석자가 없으면 조회할 필요도 없다
+    start = event.get("date", "")
+    end = event.get("end_date") or start
+    try:
+        existing = await notion_service.query_calendar_events(start, end)
+    except Exception:
+        logger.warning("겹침 확인 실패 (date=%s)", start, exc_info=True)
+        return None
+    return notion_service.find_conflicts(event, existing)
+
+
+def _overlap_lines(event: dict[str, Any], conflicts: list[dict[str, Any]] | None) -> list[str]:
+    """겹침 알림 줄. 확인하지 못했으면 그 사실을 적는다."""
+    name = event.get("name", "")
+    if conflicts is None:
+        return [f" · {name}: 겹치는 일정을 확인하지 못했습니다"]
+
+    lines: list[str] = []
+    for conflict in conflicts:
+        other = conflict["event"]
+        when = other.get("date", "")
+        when = f"{when}({notion_service.weekday_label(when)})" if when else ""
+        if other.get("end_date") and other["end_date"] != other.get("date"):
+            when += f" ~ {other['end_date']}"
+        time = other.get("time") or "시간 미기재"
+        shared = ", ".join(conflict["shared"])
+        lines.append(f" · {name} ↔ {other.get('name', '')} / {when} {time} / 겹치는 참석자 {shared}")
+        if other.get("url"):
+            lines.append(f"   {other['url']}")
+    return lines
+
+
 async def _register_notion_events(chat_log: str, today: str) -> list[str]:
     """자유 문장에서 일정을 뽑아 노션 캘린더에 등록하고, 결과 문구를 돌려준다.
 
@@ -390,11 +428,15 @@ async def _register_notion_events(chat_log: str, today: str) -> list[str]:
 
     registered: list[str] = []
     skipped: list[str] = []
+    overlaps: list[str] = []
 
     for event in events:
         try:
             # 날짜 계산은 여기서 한다. 모델은 "다음 주 화요일"을 분류만 했다.
             event = notion_service.prepare_reserved_event(event, today)
+            # 겹침은 등록 **전에** 조회한다. 등록 뒤에 보면 방금 넣은 일정이
+            # 자기 자신과 겹친다고 나온다. 겹쳐도 등록은 한다(알림만).
+            conflicts = await _find_conflicts(event)
             url = await notion_service.create_calendar_event(event)
         except notion_service.NotionWriteError as exc:
             logger.warning("노션 일정 등록 건너뜀: %s", exc)
@@ -426,6 +468,7 @@ async def _register_notion_events(chat_log: str, today: str) -> list[str]:
             if part
         )
         registered.append(f" · {event.get('name', '')} / {detail}")
+        overlaps.extend(_overlap_lines(event, conflicts))
         if url and len(registered) == 1:
             # 링크는 하나만 붙인다. 여러 건이어도 같은 캘린더라 한 번이면 된다.
             registered.append(f"   {url}")
@@ -435,6 +478,10 @@ async def _register_notion_events(chat_log: str, today: str) -> list[str]:
         count = len([item for item in registered if item.startswith(" · ")])
         lines.append(f"노션 캘린더에 {count}건을 등록했습니다.")
         lines.extend(registered)
+    if overlaps:
+        lines.append("")
+        lines.append("⚠ 참석자 일정이 겹칩니다 (등록은 완료됨):")
+        lines.extend(overlaps)
     if skipped:
         lines.append(f"등록하지 못한 일정 {len(skipped)}건:")
         lines.extend(f" · {item}" for item in skipped)
