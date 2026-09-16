@@ -299,8 +299,8 @@ async def _handle_plain_message(
 async def _refresh_choices(conversation_id: str) -> None:
     """노션의 유형·프로젝트명 선택지를 지금 다시 읽는다.
 
-    평소에는 10분마다 저절로 반영되지만, 노션에 항목을 추가하고 바로
-    예약해야 할 때 쓴다.
+    예약 모달을 열면 어차피 새로 읽으므로 평소에는 쓸 일이 없다. 노션이
+    잠깐 응답하지 않아 옛 목록이 남았을 때를 위한 수동 갱신이다.
     """
     notion_service.clear_choices_cache()
     try:
@@ -469,8 +469,8 @@ async def _register_notion_events(
     모델이 YYYY-MM-DD를 지키지 않는 경우가 있으므로 create_calendar_event가
     형식을 한 번 더 검증한다. 형식이 틀린 건만 건너뛰고 나머지는 등록한다.
     """
-    # 유형·프로젝트명 선택지는 노션에서 읽는다(10분 캐시). 노션에 항목이
-    # 늘어도 코드를 고치지 않게 하려는 것이다. 읽지 못하면 기본값으로 돈다.
+    # 유형·프로젝트명 선택지. 보통은 모달을 띄울 때 읽어 둔 값을 그대로 쓴다
+    # (예약 1건당 노션 호출 1번). 읽지 못하면 기본값으로 돈다.
     choices = await notion_service.calendar_choices()
 
     try:

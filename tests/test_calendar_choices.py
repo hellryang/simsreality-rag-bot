@@ -4,8 +4,9 @@
 고른 값을 그대로 보내지 않고 목록과 대조한다.
 
 목록을 코드에 적어 두면 노션에 항목이 늘 때마다 코드를 고쳐야 한다. 그래서
-노션에서 읽고 10분간 기억한다. 노션을 못 읽어도 예약은 계속돼야 하므로
-이전 목록이나 코드의 기본값으로 넘어간다.
+노션에서 읽는다. 예약 모달을 만들 때 새로 읽고(force), 같은 예약의 제출
+처리가 그 값을 재사용한다. 노션을 못 읽어도 예약은 계속돼야 하므로 이전
+목록이나 코드의 기본값으로 넘어간다.
 
 실제 Notion API도 Claude API도 부르지 않는다.
 """
@@ -116,22 +117,6 @@ async def test_choices_are_read_from_notion_and_remembered(monkeypatch):
     assert len(calls) == 1  # 두 번째는 기억해 둔 값을 쓴다
 
 
-async def test_the_cache_expires(monkeypatch):
-    calls = []
-
-    async def fake_read():
-        calls.append(1)
-        return NOTION_CHOICES
-
-    monkeypatch.setattr(notion_service, "_read_choices", fake_read)
-    monkeypatch.setattr(notion_service, "CHOICES_TTL_SEC", 0)
-
-    await calendar_choices()
-    await calendar_choices()
-
-    assert len(calls) == 2
-
-
 async def test_force_reads_again(monkeypatch):
     calls = []
 
@@ -172,9 +157,8 @@ async def test_a_later_failure_keeps_the_last_good_list(monkeypatch):
         raise RuntimeError("노션 죽음")
 
     monkeypatch.setattr(notion_service, "_read_choices", boom)
-    monkeypatch.setattr(notion_service, "CHOICES_TTL_SEC", 0)
 
-    assert (await calendar_choices())[PROP_PROJECT] == NOTION_CHOICES[PROP_PROJECT]
+    assert (await calendar_choices(force=True))[PROP_PROJECT] == NOTION_CHOICES[PROP_PROJECT]
 
 
 # --- 등록 흐름 · DM ---------------------------------------------------

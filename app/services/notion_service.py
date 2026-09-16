@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-import time
 from datetime import date, datetime, timedelta
 from typing import Any, Callable
 
@@ -668,20 +667,16 @@ PROP_TYPE = "유형"
 PROP_PROJECT = "프로젝트명"
 _FALLBACK_CHOICES = {PROP_TYPE: CALENDAR_TYPES, PROP_PROJECT: CALENDAR_PROJECTS}
 
-# 선택지 목록을 이만큼 기억한다. 노션에 항목을 추가해도 이 시간 안에 반영되므로
-# 봇을 재시작하지 않아도 된다. 매 예약마다 조회하면 느려지고 Rate Limit에
-# 가까워지므로 캐시한다. `/봇이름 새로고침`으로 즉시 비울 수도 있다.
-CHOICES_TTL_SEC = 600
-
+# 읽어 둔 선택지. 예약 모달을 만들 때 force=True로 새로 읽고, 같은 예약의
+# 제출 처리가 이 값을 재사용한다(예약 1건당 노션 호출 1번).
+# 시간 제한은 두지 않는다. 모달을 열 때마다 새로 읽으므로 낡을 틈이 없고,
+# 쓰이지 않는 만료 시간을 남겨 두면 코드를 읽는 사람만 헷갈린다.
 _choices_cache: dict[str, tuple[str, ...]] = {}
-_choices_read_at = 0.0
 
 
 def clear_choices_cache() -> None:
     """다음 조회 때 노션에서 다시 읽게 한다."""
-    global _choices_read_at
     _choices_cache.clear()
-    _choices_read_at = 0.0
 
 
 async def _read_choices() -> dict[str, tuple[str, ...]]:
@@ -714,14 +709,13 @@ async def calendar_choices(force: bool = False) -> dict[str, tuple[str, ...]]:
     """유형·프로젝트명 선택지. {"유형": (...), "프로젝트명": (...)}
 
     Args:
-        force: True면 캐시를 무시하고 노션에서 다시 읽는다.
+        force: True면 읽어 둔 값이 있어도 노션에서 다시 읽는다. 예약 모달을
+            만들 때 이 값으로 부른다(선택 상자가 항상 최신이어야 하므로).
 
     노션을 읽지 못하면 직전에 읽어 둔 목록을, 그것도 없으면 코드의 기본값을
     돌려준다. 선택지를 못 읽었다고 예약을 실패시키지 않는다.
     """
-    global _choices_read_at
-    fresh = time.monotonic() - _choices_read_at < CHOICES_TTL_SEC
-    if _choices_cache and fresh and not force:
+    if _choices_cache and not force:
         return dict(_choices_cache)
 
     try:
@@ -732,7 +726,6 @@ async def calendar_choices(force: bool = False) -> dict[str, tuple[str, ...]]:
 
     _choices_cache.clear()
     _choices_cache.update({**_FALLBACK_CHOICES, **found})
-    _choices_read_at = time.monotonic()
     logger.info(
         "선택지 갱신: 유형 %d개, 프로젝트명 %d개",
         len(_choices_cache[PROP_TYPE]), len(_choices_cache[PROP_PROJECT]),
