@@ -37,7 +37,7 @@ def handled(monkeypatch):
     async def fake_question(user_id, question):
         calls.append(("question", user_id, question))
 
-    async def fake_reserve(user_id, text, conversation_id=""):
+    async def fake_reserve(user_id, text, conversation_id="", project=""):
         calls.append(("reserve", user_id, text, conversation_id))
 
     async def fake_upload(user_id, filename, text):

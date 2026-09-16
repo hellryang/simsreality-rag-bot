@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
+from collections.abc import Sequence
 from typing import Any
 
 import httpx
@@ -58,6 +59,8 @@ ACTION_OPEN_BROWSER = "open_system_browser"
 FIELD_QUESTION = "question"
 # "예약하기" 모달에서 일정을 자유 문장으로 받는 칸 이름.
 FIELD_RESERVE = "reserve_text"
+# 예약 모달의 프로젝트 선택 상자. 사용자가 고르면 문장에서 뽑은 값보다 우선한다.
+FIELD_PROJECT = "reserve_project"
 
 # 버튼 식별자. 버튼의 action.value로 나갔다가 request_modal 페이로드의
 # value로 되돌아온다. 세 군데(버튼 생성·모달 응답·라우팅)에서 같은 값을
@@ -386,7 +389,12 @@ def question_modal(value: str = BUTTON_ASK) -> dict[str, Any]:
     }
 
 
-def reserve_modal(value: str = BUTTON_RESERVE) -> dict[str, Any]:
+SELECT_OPTION_LIMIT = 30
+
+
+def reserve_modal(
+    value: str = BUTTON_RESERVE, projects: Sequence[str] = ()
+) -> dict[str, Any]:
     """일정을 자유 문장으로 받아 노션 캘린더에 등록하는 모달.
 
     칸을 하나만 두는 것이 핵심이다. 이벤트명·날짜·시간·장소를 따로 받으면
@@ -399,24 +407,44 @@ def reserve_modal(value: str = BUTTON_RESERVE) -> dict[str, Any]:
     화면을 만들 수 없다. 대신 등록한 뒤 결과와 노션 링크를 DM으로 보내
     틀린 경우 노션에서 고치게 한다.
     """
+    blocks: list[dict[str, Any]] = [
+        _label_block(
+            "등록할 일정을 한 줄로 적어주세요. "
+            "날짜·시간·장소를 함께 적으면 그대로 반영됩니다."
+        ),
+        {
+            "type": "input",
+            "name": FIELD_RESERVE,
+            "required": True,
+            "placeholder": "예) 9월 15일 3시 킥오프 회의 본관 3층 대회의실",
+        },
+    ]
+
+    # 프로젝트는 고르게 한다. 문장에서 모델이 판단하면 "물류센터 프로젝트"처럼
+    # 줄여 쓴 경우를 놓치고, 느슨하게 시키면 엉뚱한 프로젝트로 찍는다.
+    # 옵션은 노션에서 읽은 목록이라 프로젝트가 늘면 여기도 늘어난다.
+    if projects:
+        blocks.append(_label_block("프로젝트 (선택)"))
+        blocks.append(
+            {
+                "type": "select",
+                "name": FIELD_PROJECT,
+                "required": False,
+                "placeholder": "고르지 않으면 비워 둡니다.",
+                "options": [
+                    {"text": name[:50], "value": name}
+                    for name in projects[:SELECT_OPTION_LIMIT]
+                ],
+            }
+        )
+
     return {
         "view": {
             "title": "예약하기",
             "accept": "등록하기",
             "decline": "취소",
             "value": value,
-            "blocks": [
-                _label_block(
-                    "등록할 일정을 한 줄로 적어주세요. "
-                    "날짜·시간·장소를 함께 적으면 그대로 반영됩니다."
-                ),
-                {
-                    "type": "input",
-                    "name": FIELD_RESERVE,
-                    "required": True,
-                    "placeholder": "예) 9월 15일 3시 킥오프 회의 본관 3층 대회의실",
-                },
-            ],
+            "blocks": blocks,
         }
     }
 

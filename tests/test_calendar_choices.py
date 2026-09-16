@@ -12,7 +12,8 @@
 import pytest
 
 from app.api import kakao_events
-from app.services import notion_service
+from app.core.config import settings
+from app.services import kakao_service, notion_service
 from app.services.claude_service import SCHEDULE_TOOL, build_schedule_tool
 from app.services.notion_service import (
     CALENDAR_PROJECTS,
@@ -179,26 +180,112 @@ async def test_a_later_failure_keeps_the_last_good_list(monkeypatch):
 # --- 등록 흐름 · DM ---------------------------------------------------
 
 
-async def test_the_project_is_saved_and_shown_in_the_dm(monkeypatch):
+def _patch_register(monkeypatch, event):
     created: list[dict] = []
 
     async def extracted(chat_log, today, choices=None):
-        assert choices  # 선택지를 모델에게 넘겨야 프로젝트를 고를 수 있다
-        return [{"name": "정밀유도무기 프로젝트 회의", "date_type": "tomorrow",
-                 "time": "16:00",
-                 "project": "정밀유도무기 디지털트윈 시뮬레이션 개발"}]
+        return [event]
 
-    async def fake_create(event, database_id=None):
-        created.append(event)
+    async def fake_create(prepared, database_id=None):
+        created.append(prepared)
         return "https://notion.so/new"
 
     monkeypatch.setattr(kakao_events.claude_service, "extract_schedule_events", extracted)
     monkeypatch.setattr(kakao_events.notion_service, "create_calendar_event", fake_create)
+    return created
 
-    joined = "\n".join(await kakao_events._register_notion_events("...", TODAY))
+
+async def test_the_selected_project_is_saved_and_shown_in_the_dm(monkeypatch):
+    """모달에서 고른 프로젝트를 그대로 쓴다."""
+    created = _patch_register(
+        monkeypatch, {"name": "프로젝트 회의", "date_type": "tomorrow", "time": "16:00"}
+    )
+
+    joined = "\n".join(
+        await kakao_events._register_notion_events(
+            "...", TODAY, "정밀유도무기 디지털트윈 시뮬레이션 개발"
+        )
+    )
 
     assert created[0]["project"] == "정밀유도무기 디지털트윈 시뮬레이션 개발"
     assert "정밀유도무기 디지털트윈 시뮬레이션 개발" in joined
+
+
+async def test_without_a_selection_the_project_is_left_empty(monkeypatch):
+    """고르지 않으면 비워 둔다. 모델이 문장에서 짐작한 값도 쓰지 않는다(사용자 결정)."""
+    created = _patch_register(
+        monkeypatch,
+        {"name": "프로젝트 회의", "date_type": "tomorrow", "time": "16:00",
+         "project": "스마트물류센터 디지털트윈 플랫폼 구축"},
+    )
+
+    await kakao_events._register_notion_events("...", TODAY)
+
+    assert created[0]["project"] == ""
+
+
+# --- 모달 선택 상자 ---------------------------------------------------
+
+
+def _select_block(modal):
+    blocks = modal["view"]["blocks"]
+    return next(b for b in blocks if b.get("type") == "select")
+
+
+def test_the_modal_offers_the_notion_projects():
+    """선택지는 노션에서 읽은 목록이라, 프로젝트가 늘면 옵션도 늘어난다."""
+    modal = kakao_service.reserve_modal(projects=("가 프로젝트", "나 프로젝트"))
+    select = _select_block(modal)
+
+    assert select["name"] == kakao_service.FIELD_PROJECT
+    assert select["required"] is False
+    assert [o["value"] for o in select["options"]] == ["가 프로젝트", "나 프로젝트"]
+
+
+def test_the_modal_has_no_select_when_choices_are_unavailable():
+    """노션을 못 읽었을 때 빈 선택 상자를 띄우지 않는다. 입력칸만 남는다."""
+    modal = kakao_service.reserve_modal()
+
+    assert all(b.get("type") != "select" for b in modal["view"]["blocks"])
+
+
+def test_too_many_projects_are_cut_to_the_platform_limit():
+    """카카오워크 select는 옵션 30개까지다(공식 문서)."""
+    modal = kakao_service.reserve_modal(projects=tuple(f"P{i}" for i in range(40)))
+
+    assert len(_select_block(modal)["options"]) == kakao_service.SELECT_OPTION_LIMIT
+
+
+async def test_the_reserve_modal_reads_projects_from_notion(monkeypatch):
+    async def fake_read():
+        return NOTION_CHOICES
+
+    monkeypatch.setattr(notion_service, "_read_choices", fake_read)
+    monkeypatch.setattr(notion_service, "calendar_choices", calendar_choices)
+    monkeypatch.setattr(settings, "kakaowork_callback_token", None)  # 토큰 검증 끔
+
+    modal = await kakao_events.request_url(
+        {"value": kakao_service.BUTTON_RESERVE}, token=""
+    )
+
+    options = [o["value"] for o in _select_block(modal)["options"]]
+    assert options == list(NOTION_CHOICES[PROP_PROJECT])
+
+
+async def test_a_notion_failure_still_opens_the_modal(monkeypatch):
+    async def boom():
+        raise RuntimeError("노션 죽음")
+
+    monkeypatch.setattr(notion_service, "_read_choices", boom)
+    monkeypatch.setattr(notion_service, "calendar_choices", calendar_choices)
+    monkeypatch.setattr(settings, "kakaowork_callback_token", None)  # 토큰 검증 끔
+
+    modal = await kakao_events.request_url(
+        {"value": kakao_service.BUTTON_RESERVE}, token=""
+    )
+
+    # 기본 목록으로라도 띄운다. 선택지를 못 읽었다고 예약을 막지 않는다.
+    assert [o["value"] for o in _select_block(modal)["options"]] == list(CALENDAR_PROJECTS)
 
 
 # --- 새로고침 명령 ----------------------------------------------------

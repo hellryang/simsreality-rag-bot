@@ -149,8 +149,24 @@ async def request_url(
     logger.info("Request URL 호출: action=%s", action_name)
 
     if action_name == kakao_service.BUTTON_RESERVE:
-        return kakao_service.reserve_modal()
+        return kakao_service.reserve_modal(projects=await _reserve_projects())
     return kakao_service.question_modal()
+
+
+async def _reserve_projects() -> tuple[str, ...]:
+    """예약 모달의 프로젝트 선택 상자에 넣을 목록.
+
+    버튼을 누를 때마다 노션에서 읽는다(force). 모달은 그때그때 만들어 보내는
+    JSON이라, 노션에 프로젝트가 늘면 선택 상자도 함께 늘어난다.
+    조회가 실패하면 마지막으로 읽어 둔 목록으로 모달을 띄운다 - 선택지를 못
+    읽었다고 예약 자체를 막지 않는다.
+    """
+    try:
+        choices = await notion_service.calendar_choices(force=True)
+    except Exception:
+        logger.warning("프로젝트 선택지를 읽지 못했습니다.", exc_info=True)
+        return ()
+    return tuple(choices.get(notion_service.PROP_PROJECT, ()))
 
 
 # --- Callback URL ----------------------------------------------------
@@ -204,7 +220,12 @@ async def callback_url(
     elif reserve_text:
         # 등록 결과 DM이 실패하면 모달을 띄운 방으로 대신 보낸다.
         conversation_id = _dig(payload, "message.conversation_id", "conversation_id")
-        background_tasks.add_task(_handle_reserve, user_id, reserve_text, conversation_id)
+        # 사용자가 고른 프로젝트. 고르지 않았으면 빈 문자열이고, 그때는 문장에서
+        # 모델이 판단한 값을 쓴다.
+        project = inputs.get(kakao_service.FIELD_PROJECT, "").strip()
+        background_tasks.add_task(
+            _handle_reserve, user_id, reserve_text, conversation_id, project
+        )
     else:
         logger.warning("알 수 없는 입력: %s", list(inputs))
         return {"status": "unknown_input"}
@@ -373,7 +394,9 @@ def _headline(text: str) -> str:
     return "제목 없음"
 
 
-async def _handle_reserve(user_id: str, text: str, conversation_id: str = "") -> None:
+async def _handle_reserve(
+    user_id: str, text: str, conversation_id: str = "", project: str = ""
+) -> None:
     """[예약하기] 모달에 적은 한 줄을 노션 캘린더에 등록한다.
 
     사용자는 "9월 15일 3시 킥오프 회의 본관 3층 대회의실"처럼 한 줄만 적는다.
@@ -386,7 +409,7 @@ async def _handle_reserve(user_id: str, text: str, conversation_id: str = "") ->
     노션 링크를 보내 틀린 경우 노션에서 고치게 한다.
     """
     today = kakao_service.now_kst()[:10]
-    lines = await _register_notion_events(text, today)
+    lines = await _register_notion_events(text, today, project)
     await _reply(user_id, conversation_id, "\n".join(lines))
 
 
@@ -428,12 +451,16 @@ def _overlap_lines(event: dict[str, Any], conflicts: list[dict[str, Any]] | None
     return lines
 
 
-async def _register_notion_events(chat_log: str, today: str) -> list[str]:
+async def _register_notion_events(
+    chat_log: str, today: str, project: str = ""
+) -> list[str]:
     """자유 문장에서 일정을 뽑아 노션 캘린더에 등록하고, 결과 문구를 돌려준다.
 
     Args:
         chat_log: 사용자가 모달에 적은 문장
         today: 오늘 날짜(YYYY-MM-DD). "다음주 화요일" 계산 기준.
+        project: 모달에서 고른 프로젝트. 고르지 않았으면 빈 문자열이고,
+            그때는 프로젝트명을 비워 둔다(문장에서 짐작하지 않는다).
 
     Returns:
         사용자에게 보여줄 결과 줄 목록. 예외를 밖으로 던지지 않는다.
@@ -464,6 +491,9 @@ async def _register_notion_events(chat_log: str, today: str) -> list[str]:
 
     for event in events:
         try:
+            # 프로젝트는 모달에서 고른 값만 쓴다. 고르지 않았으면 비워 둔다
+            # (사용자 결정). 문장에서 짐작한 값으로 채우면 틀렸을 때 그대로 남는다.
+            event = {**event, "project": project}
             # 날짜 계산은 여기서 한다. 모델은 "다음 주 화요일"을 분류만 했다.
             event = notion_service.prepare_reserved_event(event, today, choices)
             # 겹침은 등록 **전에** 조회한다. 등록 뒤에 보면 방금 넣은 일정이
