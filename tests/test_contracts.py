@@ -69,6 +69,33 @@ def test_adjacent_chunks_overlap_by_50():
     assert chunks[0].text[-50:] == chunks[1].text[:50]
 
 
+def test_table_row_is_never_split_across_chunks():
+    """표의 한 행은 통째로 한 조각 안에 들어가야 한다. (2026-08-16 팀 합의로 추가)
+
+    글자 수만 세서 자르면 행이 두 조각으로 갈라져
+    "년 | 연락처: ... | 현재 프로젝트 담당: Slack" 같은 반토막이 남는다.
+    누구 이야기인지 알 수 없으니 검색에 걸려도 쓸모가 없고, Claude에 넘어가면
+    근거를 잘못 읽는다. 실제로 "카카오워크 담당이 누구야"에 한 명이 누락됐다.
+    """
+    from app.services.embedder import chunk_document
+
+    rows = [
+        f"이름: 팀원{i} | 학년: 2학년 | 학교: 전남대 | 학과: 인공지능학부 | "
+        f"주력 스킬: Back-end | 현재 프로젝트 담당: KakaoWork"
+        for i in range(8)
+    ]
+    document = Document(text="\n".join(rows), source="notion", title="팀 구성")
+
+    chunks = chunk_document(document)
+
+    assert len(chunks) > 1, "이 정도 길이면 여러 조각으로 갈려야 한다"
+    assert all(len(c.text) <= 300 for c in chunks)
+
+    # 모든 행이 어느 한 조각 안에 온전히 들어 있어야 한다.
+    for row in rows:
+        assert any(row in c.text for c in chunks), f"행이 쪼개졌다: {row[:30]}..."
+
+
 def test_short_document_stays_one_chunk():
     """300자가 안 되는 짧은 메시지를 억지로 쪼개면 안 된다."""
     from app.services.embedder import chunk_document
@@ -212,7 +239,6 @@ async def test_empty_hits_skip_the_claude_call():
 # 송준호 — app/services/slack_service.py
 # ====================================================================
 
-@pytest.mark.xfail(strict=True, reason="송준호: scrub_pii 구현 후 이 줄 삭제")
 def test_phone_number_is_masked():
     """메신저 로그에는 개인정보가 섞인다. 벡터 DB에 그대로 들어가면 안 된다.
 
@@ -226,7 +252,6 @@ def test_phone_number_is_masked():
     assert "연락주세요" in scrubbed
 
 
-@pytest.mark.xfail(strict=True, reason="송준호: scrub_pii 구현 후 이 줄 삭제")
 def test_email_address_is_masked():
     """멘토 이메일이 답변에 그대로 인용되는 사고를 막는다."""
     from app.services.slack_service import scrub_pii
@@ -236,7 +261,6 @@ def test_email_address_is_masked():
     assert "hoo@simsreality.com" not in scrubbed
 
 
-@pytest.mark.xfail(strict=True, reason="송준호: scrub_pii 구현 후 이 줄 삭제")
 def test_ordinary_sentence_is_untouched():
     """과하게 지우면 검색할 내용 자체가 사라진다."""
     from app.services.slack_service import scrub_pii

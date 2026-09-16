@@ -24,6 +24,10 @@ notion-client==3.1.0
 # output_config 로 바꾼다.
 anthropic==0.121.0
 
+# 대시보드 HTML 템플릿 (app/templates/*.html)
+# FastAPI 에 기본 포함이 아니다. 없으면 Jinja2Templates import 에서 기동 실패.
+jinja2==3.1.6
+
 # 카카오워크 파일 업로드 (app/services/kakao_upload.py)
 python-multipart==0.0.32
 pypdf==6.18.1

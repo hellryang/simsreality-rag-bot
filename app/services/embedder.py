@@ -30,11 +30,71 @@ CHUNK_SIZE = 300
 CHUNK_OVERLAP = 50
 
 
-def chunk_document(document: Document) -> list[Chunk]:
-    """문서 하나를 300자 조각으로 자른다. 이웃한 조각은 50자를 공유한다.
+def _split_long_line(line: str) -> list[str]:
+    """300자를 넘는 한 줄을 어쩔 수 없이 글자 수로 자른다.
 
     자르는 간격(step)은 300 - 50 = 250자다. 그래서 0~300, 250~550, 500~800...
-    으로 250자씩 전진하면서 매번 300자를 떠낸다.
+    으로 250자씩 전진하면서 매번 300자를 떠낸다. 문장 중간이 잘리므로,
+    경계에 걸친 문장이 사라지지 않도록 50자를 겹쳐 둔다.
+    """
+    step = CHUNK_SIZE - CHUNK_OVERLAP
+    pieces: list[str] = []
+
+    for start in range(0, len(line), step):
+        piece = line[start : start + CHUNK_SIZE]
+        if piece.strip():
+            pieces.append(piece)
+        # 마지막 조각까지 떠냈으면 멈춘다. 안 그러면 끝에서 짧은 꼬리가 계속 생긴다.
+        if start + CHUNK_SIZE >= len(line):
+            break
+
+    return pieces
+
+
+def _split_into_lines(text: str) -> list[str]:
+    """본문을 줄 단위로 나눈다. 300자가 넘는 줄만 더 잘게 쪼갠다."""
+    lines: list[str] = []
+
+    for line in text.split("\n"):
+        if not line.strip():
+            continue
+        if len(line) <= CHUNK_SIZE:
+            lines.append(line)
+        else:
+            lines.extend(_split_long_line(line))
+
+    return lines
+
+
+def _overlap_tail(lines: list[str]) -> tuple[list[str], int]:
+    """다음 조각 앞에 다시 붙일 꼬리 줄들을 고른다. 합쳐서 50자 이내.
+
+    표의 한 행처럼 50자가 넘는 줄은 통째로 못 넣으므로 겹침 없이 넘어간다.
+    줄 경계에서만 자르므로 어차피 문장이 잘릴 일이 없어 손해가 아니다.
+    """
+    tail: list[str] = []
+    total = 0
+
+    for line in reversed(lines):
+        added = len(line) + (1 if tail else 0)
+        if total + added > CHUNK_OVERLAP:
+            break
+        tail.insert(0, line)
+        total += added
+
+    return tail, total
+
+
+def chunk_document(document: Document) -> list[Chunk]:
+    """문서 하나를 300자 이내 조각으로 자른다. **줄을 쪼개지 않는다.**
+
+    **왜 줄 단위인가**: 예전에는 글자 수만 세서 잘랐다. 그러면 표의 한 행이
+    두 조각으로 갈라져 "년 | 연락처: ... | 담당: Slack" 같은 반토막이 남는다.
+    이런 조각은 누구 이야기인지 알 수 없어 검색에 걸려도 쓸모가 없고,
+    Claude에 넘어가면 근거를 잘못 읽는다.
+
+    그래서 줄 경계에서만 끊는다. 300자를 넘는 긴 문단 한 줄은 어쩔 수 없이
+    글자 수로 자르되(`_split_long_line`), 그때만 50자를 겹친다.
 
     Args:
         document: 수집 단계에서 만든 문서
@@ -47,18 +107,32 @@ def chunk_document(document: Document) -> list[Chunk]:
     if len(text) <= CHUNK_SIZE:
         return [Chunk.from_document(document, text=text, index=0)]
 
-    step = CHUNK_SIZE - CHUNK_OVERLAP
-    chunks: list[Chunk] = []
+    pieces: list[str] = []
+    current: list[str] = []
+    current_len = 0
 
-    for start in range(0, len(text), step):
-        piece = text[start : start + CHUNK_SIZE]
-        if piece.strip():
-            chunks.append(Chunk.from_document(document, text=piece, index=len(chunks)))
-        # 마지막 조각까지 떠냈으면 멈춘다. 안 그러면 끝에서 짧은 꼬리가 계속 생긴다.
-        if start + CHUNK_SIZE >= len(text):
-            break
+    for line in _split_into_lines(text):
+        added = len(line) + (1 if current else 0)  # +1은 줄바꿈 문자
 
-    return chunks
+        if current and current_len + added > CHUNK_SIZE:
+            pieces.append("\n".join(current))
+            current, current_len = _overlap_tail(current)
+            # 꼬리를 남기면 이번 줄이 또 안 들어가는 경우엔 꼬리를 버린다.
+            # 안 그러면 같은 줄을 영원히 못 넣고 맴돈다.
+            if current and current_len + len(line) + 1 > CHUNK_SIZE:
+                current, current_len = [], 0
+            added = len(line) + (1 if current else 0)
+
+        current.append(line)
+        current_len += added
+
+    if current:
+        pieces.append("\n".join(current))
+
+    return [
+        Chunk.from_document(document, text=piece, index=index)
+        for index, piece in enumerate(pieces)
+    ]
 
 
 def chunk_documents(documents: list[Document]) -> list[Chunk]:

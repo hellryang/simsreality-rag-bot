@@ -19,6 +19,7 @@ from notion_client import AsyncClient
 from notion_client.errors import APIResponseError
 
 from app.core.config import settings
+from app.core.security import scrub_pii
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,14 @@ _TEXT_BLOCK_TYPES = (
     "toggle",
     "code",
 )
+
+# 자식 블록을 몇 단계까지 따라 내려갈지.
+# 토글 안의 토글, 다단(column) 안의 표처럼 중첩이 있어서 1단계로는 부족하다.
+# 무한정 내려가면 Rate Limit에 걸리므로 상한을 둔다.
+_MAX_BLOCK_DEPTH = 3
+
+# 표 한 줄 안에서 칸을 구분하는 문자.
+_CELL_SEPARATOR = " | "
 
 
 async def _with_backoff(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -132,23 +141,105 @@ async def _list_all_blocks(client: AsyncClient, page_id: str) -> list[dict[str, 
     return blocks
 
 
-async def _fetch_page_text(client: AsyncClient, page_id: str) -> str:
-    """페이지 본문 블록을 읽어 하나의 문자열로 합친다.
+def _extract_table_rows(rows: list[dict[str, Any]], has_column_header: bool) -> list[str]:
+    """표의 행 블록들을 검색이 되는 문장으로 바꾼다.
 
-    하위 블록(자식)까지 재귀로 따라가지는 않는다. 1단계 깊이만 읽어도
-    회의록·업무 문서 대부분의 본문은 확보된다.
+    Notion 표는 `table` 블록 밑에 `table_row` 블록이 자식으로 달리고,
+    각 행의 `cells`는 [[rich_text], [rich_text], ...] 로 칸마다 한 겹 더 감싸여 온다.
+
+    **머리글을 각 행에 되붙이는 이유**: 본문은 나중에 300자 단위로 잘린다.
+    표를 그대로 옮겨 적으면 "임혜량 | 완료 | 8/22" 같은 줄만 남아, 조각이 잘리는
+    순간 이 값들이 무엇을 뜻하는지 알 수 없게 된다. 그래서 행마다
+    "담당: 임혜량 | 상태: 완료" 로 머리글을 붙여 한 줄만 봐도 뜻이 통하게 만든다.
+    임베딩은 문장의 의미로 검색하므로, 이렇게 해야 "누가 담당이야" 같은 질문에 걸린다.
+
+    Args:
+        rows: `table` 블록의 자식 블록 목록
+        has_column_header: 첫 행이 머리글인지 (`table` 블록이 알려준다)
+
+    Returns:
+        행마다 한 줄씩. 빈 행은 제외한다.
+    """
+    cell_rows: list[list[str]] = [
+        [_extract_plain_text(cell) for cell in row.get("table_row", {}).get("cells", [])]
+        for row in rows
+        if row.get("type") == "table_row"
+    ]
+    if not cell_rows:
+        return []
+
+    if not has_column_header:
+        # 머리글이 없으면 붙일 이름도 없다. 값만 이어 붙인다.
+        return [
+            _CELL_SEPARATOR.join(cell for cell in cells if cell.strip())
+            for cells in cell_rows
+            if any(cell.strip() for cell in cells)
+        ]
+
+    headers = cell_rows[0]
+    lines: list[str] = []
+
+    for cells in cell_rows[1:]:
+        pairs: list[str] = []
+        for index, value in enumerate(cells):
+            if not value.strip():
+                continue
+            # 머리글 칸이 비어 있을 수 있으므로 있을 때만 이름을 붙인다.
+            header = headers[index] if index < len(headers) else ""
+            pairs.append(f"{header}: {value}" if header.strip() else value)
+        if pairs:
+            lines.append(_CELL_SEPARATOR.join(pairs))
+
+    return lines
+
+
+async def _fetch_table_lines(client: AsyncClient, table_block: dict[str, Any]) -> list[str]:
+    """표 블록 하나를 읽어 행 목록으로 만든다.
+
+    행은 표 블록의 '자식'이라 블록 목록을 한 번 더 요청해야 나온다.
+    """
+    rows = await _list_all_blocks(client, table_block["id"])
+    return _extract_table_rows(
+        rows,
+        has_column_header=table_block.get("table", {}).get("has_column_header", False),
+    )
+
+
+async def _collect_block_lines(
+    client: AsyncClient, block_id: str, depth: int = 0
+) -> list[str]:
+    """블록을 훑어 본문 줄 목록을 만든다. 자식이 있으면 재귀로 따라 내려간다.
+
+    토글(접힌 내용), 다단(column_list), 중첩 목록은 내용이 전부 자식 블록에
+    들어 있다. 1단계만 읽으면 이 내용이 통째로 누락된다.
     """
     lines: list[str] = []
 
-    for block in await _list_all_blocks(client, page_id):
+    for block in await _list_all_blocks(client, block_id):
         block_type = block.get("type")
-        if block_type not in _TEXT_BLOCK_TYPES:
-            continue
-        text = _extract_plain_text(block.get(block_type, {}).get("rich_text", []))
-        if text.strip():
-            lines.append(text)
 
-    return "\n".join(lines)
+        # 하위 페이지·하위 DB는 별도 문서로 따로 수집한다. 본문에 섞으면 중복된다.
+        if block_type in ("child_page", "child_database"):
+            continue
+
+        if block_type == "table":
+            lines.extend(await _fetch_table_lines(client, block))
+            continue
+
+        if block_type in _TEXT_BLOCK_TYPES:
+            text = _extract_plain_text(block.get(block_type, {}).get("rich_text", []))
+            if text.strip():
+                lines.append(text)
+
+        if block.get("has_children") and depth < _MAX_BLOCK_DEPTH:
+            lines.extend(await _collect_block_lines(client, block["id"], depth + 1))
+
+    return lines
+
+
+async def _fetch_page_text(client: AsyncClient, page_id: str) -> str:
+    """페이지 본문 블록을 읽어 하나의 문자열로 합친다."""
+    return "\n".join(await _collect_block_lines(client, page_id))
 
 
 async def collect_notion_documents(limit: int | None = None) -> list[dict[str, Any]]:
@@ -186,7 +277,7 @@ async def collect_notion_documents(limit: int | None = None) -> list[dict[str, A
                 # 제목만 있고 본문이 비어도 제목 자체가 검색에 쓸모가 있으므로 남긴다.
                 documents.append(
                     {
-                        "text": f"{title}\n{body}".strip(),
+                        "text": scrub_pii(f"{title}\n{body}".strip()),
                         "source": "notion",
                         "url": page.get("url", ""),
                         "title": title,
@@ -216,6 +307,7 @@ async def _build_document(
     """페이지 하나를 읽어 수집 결과 dict 한 건으로 만든다.
 
     본문이 비어 있으면 제목만으로도 검색에 쓸모가 있으므로 버리지 않는다.
+    연락처·이메일은 벡터 DB에 들어가기 전에 여기서 마스킹한다.
     """
     body = await _fetch_page_text(client, page_id)
 
@@ -223,7 +315,7 @@ async def _build_document(
     meta = await _with_backoff(client.pages.retrieve, page_id=page_id)
 
     return {
-        "text": f"{title}\n{body}".strip(),
+        "text": scrub_pii(f"{title}\n{body}".strip()),
         "source": "notion",
         "url": meta.get("url", ""),
         "title": title,
@@ -248,8 +340,9 @@ async def collect_notion_page_tree(
         limit: 가져올 최대 문서 수. None이면 전체
         max_depth: 하위의 하위까지 몇 단계나 따라갈지. 1이면 바로 아래만
         include_root: 기준 페이지 본문 자체도 문서로 넣을지.
-            기본값 False다. 프로젝트 최상단 페이지에는 팀원 명단처럼
-            개인정보가 섞이기 쉬워서, 명시적으로 켤 때만 넣는다.
+            기본값 False다. 최상단 페이지에는 팀원 명단처럼 개인정보가
+            섞이기 쉬워서 켜는 쪽을 의식적으로 고르게 했다.
+            연락처·이메일은 `scrub_pii`가 마스킹하므로 켜도 안전하다.
 
     Returns:
         [{"text", "source", "url", "title", "created_at"}, ...]

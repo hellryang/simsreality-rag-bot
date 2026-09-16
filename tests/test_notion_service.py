@@ -8,8 +8,17 @@ from app.models.schemas import Document
 from app.services.notion_service import (
     _extract_child_pages,
     _extract_plain_text,
+    _extract_table_rows,
     _extract_title,
 )
+
+
+def _row(*values: str) -> dict:
+    """table_row 블록을 흉내 낸다. Notion은 칸마다 rich_text 배열을 한 겹 더 감싼다."""
+    return {
+        "type": "table_row",
+        "table_row": {"cells": [[{"plain_text": v}] if v else [] for v in values]},
+    }
 
 
 def test_rich_text_fragments_are_joined():
@@ -90,6 +99,52 @@ def test_non_page_blocks_are_ignored_when_listing_children():
 def test_page_without_children_returns_empty_list():
     """하위 페이지가 하나도 없어도 예외 없이 빈 목록을 돌려준다."""
     assert _extract_child_pages([]) == []
+
+
+def test_table_header_is_attached_to_every_row():
+    """표의 각 행에 머리글이 붙어야 조각으로 잘려도 뜻이 통한다.
+
+    "임혜량 | 완료" 만 남으면 이게 담당자인지 작성자인지 알 수 없다.
+    "담당: 임혜량" 이어야 "누가 담당이야" 라는 질문에 검색이 걸린다.
+    """
+    rows = [
+        _row("담당", "상태"),
+        _row("임혜량", "완료"),
+        _row("마준서", "진행중"),
+    ]
+
+    assert _extract_table_rows(rows, has_column_header=True) == [
+        "담당: 임혜량 | 상태: 완료",
+        "담당: 마준서 | 상태: 진행중",
+    ]
+
+
+def test_table_without_header_keeps_values_only():
+    """머리글이 없는 표는 붙일 이름이 없으므로 값만 이어 붙인다."""
+    rows = [_row("Railway", "무료"), _row("Render", "무료")]
+
+    assert _extract_table_rows(rows, has_column_header=False) == [
+        "Railway | 무료",
+        "Render | 무료",
+    ]
+
+
+def test_empty_cells_and_rows_are_dropped():
+    """빈 칸까지 "담당: " 처럼 남기면 검색에 잡음만 늘어난다."""
+    rows = [
+        _row("담당", "상태"),
+        _row("임혜량", ""),
+        _row("", ""),
+    ]
+
+    assert _extract_table_rows(rows, has_column_header=True) == ["담당: 임혜량"]
+
+
+def test_non_table_row_blocks_are_ignored():
+    """표 밑에 다른 블록이 섞여 와도 예외 없이 행만 골라낸다."""
+    rows = [{"type": "paragraph", "paragraph": {"rich_text": []}}]
+
+    assert _extract_table_rows(rows, has_column_header=False) == []
 
 
 def test_collected_shape_matches_document_schema():

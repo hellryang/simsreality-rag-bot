@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>CHONDAEYONG - AI 기반 업무 협업 플랫폼</title>
+    <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" rel="stylesheet">
+    <style>
+        :root {
+            --bg-main: #ffffff;
+            --bg-sidebar: #f7f6f3;
+            --bg-card: #f1f0ec;
+            --text-primary: #37352f;
+            --text-secondary: #787774;
+            --border-color: #e9e8e4;
+            --brand-color: #fee500;
+            --brand-text: #191919;
+            --chat-user: #feeb5d;
+            --chat-ai: #f1f0ec;
+        }
+
+        body.admin-mode {
+            --bg-main: #191919;
+            --bg-sidebar: #202020;
+            --bg-card: #2f2f2f;
+            --text-primary: rgba(255, 255, 255, 0.9);
+            --text-secondary: #9b9b9b;
+            --border-color: #2f2f2f;
+            --brand-color: #3182ce;
+            --brand-text: #ffffff;
+            --chat-user: #2b4c7e;
+            --chat-ai: #2f2f2f;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: "Pretendard", -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif; background: var(--bg-main); color: var(--text-primary); height: 100vh; display: flex; transition: background 0.2s ease, color 0.2s ease; }
+
+        .sidebar { width: 280px; background: var(--bg-sidebar); border-right: 1px solid var(--border-color); padding: 20px 16px; display: flex; flex-direction: column; justify-content: space-between; }
+        
+        .workspace-header { font-weight: 800; font-size: 18px; letter-spacing: 0.5px; padding: 4px 8px; margin-bottom: 24px; color: var(--text-primary); }
+
+        .section-label { font-size: 11px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; padding-left: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+        .mode-container { display: flex; flex-direction: column; gap: 4px; margin-bottom: 24px; }
+        .mode-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--text-primary); transition: background 0.15s; }
+        .mode-item:hover { background: rgba(0, 0, 0, 0.04); }
+        body.admin-mode .mode-item:hover { background: rgba(255, 255, 255, 0.05); }
+        .mode-item.active { background: var(--bg-card); font-weight: 600; }
+
+        .callout-box { background: var(--bg-card); border-radius: 6px; padding: 12px; font-size: 12px; color: var(--text-secondary); line-height: 1.5; border: 1px solid var(--border-color); }
+        .callout-title { font-weight: 600; color: var(--text-primary); margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+
+        .main-container { flex: 1; display: flex; flex-direction: column; background: var(--bg-main); }
+        .top-nav { height: 52px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; padding: 0 24px; font-size: 13px; color: var(--text-secondary); }
+        .page-title { display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--text-primary); font-size: 15px; }
+
+        .chat-view { flex: 1; padding: 32px 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; max-width: 800px; width: 100%; margin: 0 auto; }
+        
+        .msg-row { display: flex; flex-direction: column; max-width: 75%; }
+        .msg-row.user { align-self: flex-end; align-items: flex-end; }
+        .msg-row.ai { align-self: flex-start; align-items: flex-start; }
+
+        .msg-author { font-size: 11px; color: var(--text-secondary); margin-bottom: 4px; padding: 0 4px; }
+        .msg-bubble { padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.5; word-break: break-word; white-space: pre-wrap; }
+        .msg-row.user .msg-bubble { background: var(--chat-user); color: #191919; border-bottom-right-radius: 2px; }
+        .msg-row.ai .msg-bubble { background: var(--chat-ai); color: var(--text-primary); border-bottom-left-radius: 2px; border: 1px solid var(--border-color); }
+
+        .input-container { padding: 20px 24px 32px; max-width: 800px; width: 100%; margin: 0 auto; }
+        .input-box { display: flex; align-items: center; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; padding: 6px 12px; gap: 8px; }
+        .input-box input { flex: 1; border: none; background: transparent; padding: 8px 4px; font-size: 14px; color: var(--text-primary); outline: none; font-family: inherit; }
+        .send-btn { background: var(--brand-color); color: var(--brand-text); border: none; border-radius: 6px; padding: 6px 14px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <div class="sidebar">
+        <div>
+            <div class="workspace-header">CHONDAEYONG</div>
+
+            <div class="section-label">권한 및 뷰 선택</div>
+            <div class="mode-container">
+                <div class="mode-item active" id="userModeBtn" onclick="setMode('USER')">
+                    <span>💬 사용자 모드</span>
+                </div>
+                <div class="mode-item" id="adminModeBtn" onclick="setMode('ADMIN')">
+                    <span>🔒 관리자 모드</span>
+                </div>
+            </div>
+
+            <div class="section-label">동기화 상태</div>
+            <div class="callout-box">
+                <div class="callout-title">
+                    <span>📌</span>
+                    <span id="targetRoomTitle">일반/소모임 채널</span>
+                </div>
+                <div id="targetRoomDesc">협업 플랫폼 데이터를 파싱하여 자동으로 동기화 및 업로드를 진행합니다.</div>
+            </div>
+        </div>
+
+        <div style="font-size: 11px; color: var(--text-secondary); text-align: center;">
+            CHONDAEYONG AI PLATFORM
+        </div>
+    </div>
+
+    <div class="main-container">
+        <div class="top-nav">
+            <div class="page-title">
+                <span id="pageIcon">⚡</span>
+                <span id="pageTitle">AI 기반 업무 협업 플랫폼 연동 및 자동화 서비스</span>
+            </div>
+            <div style="font-size: 11px;" id="statusBadge">● System Active</div>
+        </div>
+
+        <div class="chat-view" id="chatView">
+            <div class="msg-row ai">
+                <div class="msg-author">CHONDAEYONG Bot</div>
+                <div class="msg-bubble">안녕하세요! CHONDAEYONG 플랫폼입니다. 연동 및 자동화 작업에 필요한 요청을 입력해 주세요.</div>
+            </div>
+        </div>
+
+        <div class="input-container">
+            <div class="input-box">
+                <input type="text" id="userInput" placeholder="요청 사항을 입력하세요..." onkeypress="if(event.key==='Enter') sendMessage()">
+                <button class="send-btn" onclick="sendMessage()">전송</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentMode = 'USER';
+
+        function setMode(mode) {
+            currentMode = mode;
+            const body = document.body;
+            const userBtn = document.getElementById('userModeBtn');
+            const adminBtn = document.getElementById('adminModeBtn');
+            const targetRoomTitle = document.getElementById('targetRoomTitle');
+            const targetRoomDesc = document.getElementById('targetRoomDesc');
+
+            if (mode === 'ADMIN') {
+                body.classList.add('admin-mode');
+                adminBtn.classList.add('active');
+                userBtn.classList.remove('active');
+                targetRoomTitle.innerText = "관리자 전용 채널";
+                targetRoomDesc.innerText = "관리자 권한의 프로젝트 및 기밀 데이터 동기화를 처리합니다.";
+            } else {
+                body.classList.remove('admin-mode');
+                userBtn.classList.add('active');
+                adminBtn.classList.remove('active');
+                targetRoomTitle.innerText = "일반/소모임 채널";
+                targetRoomDesc.innerText = "협업 플랫폼 데이터를 파싱하여 자동으로 동기화 및 업로드를 진행합니다.";
+            }
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('userInput');
+            const text = input.value.trim();
+            if (!text) return;
+
+            const chatView = document.getElementById('chatView');
+
+            // 1. 사용자 질문 말풍선 생성
+            const userRow = document.createElement('div');
+            userRow.className = 'msg-row user';
+            userRow.innerHTML = `
+                <div class="msg-author">Me</div>
+                <div class="msg-bubble">${text}</div>
+            `;
+            chatView.appendChild(userRow);
+            input.value = '';
+
+            // 2. 답변 대기 로딩 말풍선 생성
+            const aiRow = document.createElement('div');
+            aiRow.className = 'msg-row ai';
+            aiRow.innerHTML = `
+                <div class="msg-author">CHONDAEYONG Bot</div>
+                <div class="msg-bubble" id="loadingBubble">답변을 생성하는 중입니다...</div>
+            `;
+            chatView.appendChild(aiRow);
+            chatView.scrollTop = chatView.scrollHeight;
+
+            try {
+                // 3. 백엔드 API 호출 (/api/chat)
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: text, mode: currentMode })
+                });
+
+                if (!response.ok) {
+                    throw new Error("서버 응답 오류");
+                }
+                
+                const data = await response.json();
+                const bubble = aiRow.querySelector('.msg-bubble');
+                bubble.innerText = data.response;
+            } catch (error) {
+                const bubble = aiRow.querySelector('.msg-bubble');
+                bubble.innerText = "백엔드 API 연결 실패: main.py 서버 상태 및 /api/chat 라우트를 확인해 주세요.";
+            }
+            
+            chatView.scrollTop = chatView.scrollHeight;
+        }
+    </script>
+</body>
+</html>

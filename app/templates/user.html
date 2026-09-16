@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>사용자 대시보드 - KakaoWork AI Bot</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-dark: #0B0E14;
+            --card-bg: #121824;
+            --border-color: #1F293D;
+            --text-main: #FFFFFF;
+            --text-sub: #8A94A6;
+            --accent-purple: #6366F1;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Pretendard', sans-serif; }
+        body { background-color: var(--bg-dark); color: var(--text-main); padding: 20px 40px; }
+        
+        header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 20px; border-bottom: 1px solid var(--border-color); }
+        .logo { font-weight: bold; font-size: 16px; }
+        .nav-btn { background: #1E293B; color: #94A3B8; padding: 6px 16px; border-radius: 20px; text-decoration: none; font-size: 13px; }
+        .nav-btn.active { background: #4F46E5; color: #fff; }
+
+        .user-profile-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; margin: 20px 0; display: flex; justify-content: space-between; align-items: center; }
+        .profile-info { display: flex; align-items: center; gap: 16px; }
+        .avatar-circle { width: 44px; height: 44px; background: #4F46E5; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 16px; }
+
+        .metrics-grid-6 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px; }
+        .card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 18px; }
+        .card-label { color: var(--text-sub); font-size: 12px; margin-bottom: 10px; }
+        .card-value { font-size: 26px; font-weight: bold; margin-bottom: 6px; }
+        .card-sub { color: var(--text-sub); font-size: 11px; }
+
+        .main-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
+        .chart-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; }
+        .side-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+        .info-row { display: flex; justify-content: space-between; font-size: 13px; padding: 10px 0; border-bottom: 1px solid #1E293B; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">⚡ KakaoWork AI Bot <span style="color:#64748B; font-size:12px;">SIMSREALITY</span></div>
+        <div>
+            <a href="/admin" class="nav-btn">관리자</a>
+            <a href="/user" class="nav-btn active">사용자</a>
+        </div>
+    </header>
+
+    <div class="user-profile-card">
+        <div class="profile-info">
+            <div class="avatar-circle" id="user-avatar">임</div>
+            <div>
+                <h2 id="user-display-name">임혜량</h2>
+                <p style="color: var(--text-sub); font-size: 13px;">(주)심스리얼리티 · AI 사용자</p>
+            </div>
+        </div>
+        <div style="color: #10B981; font-size: 12px;">● 활성</div>
+    </div>
+
+    <!-- 6 Metric Cards -->
+    <div class="metrics-grid-6">
+        <div class="card">
+            <div class="card-label">금일 토큰</div>
+            <div class="card-value" id="user-today">0</div>
+            <div class="card-sub">오늘 사용한 전체 토큰</div>
+        </div>
+        <div class="card">
+            <div class="card-label">주간 토큰</div>
+            <div class="card-value" id="user-weekly">0</div>
+            <div class="card-sub">최근 7일 누적</div>
+        </div>
+        <div class="card">
+            <div class="card-label">월간 토큰</div>
+            <div class="card-value" id="user-monthly">0</div>
+            <div class="card-sub">이번 달 누적</div>
+        </div>
+        <div class="card">
+            <div class="card-label">회당 평균 토큰</div>
+            <div class="card-value" id="user-per-req-tokens" style="color: #6366F1;">0</div>
+            <div class="card-sub">1회 질문당 평균 소모량</div>
+        </div>
+        <div class="card">
+            <div class="card-label">주간 일 평균 토큰</div>
+            <div class="card-value" id="user-avg-tokens">0</div>
+            <div class="card-sub">최근 7일 기준 일 평균</div>
+        </div>
+        <div class="card">
+            <div class="card-label">총 대화 수</div>
+            <div class="card-value" id="user-req-count">0건</div>
+            <div class="card-sub">누적 요청 건수</div>
+        </div>
+    </div>
+
+    <div class="main-grid">
+        <div class="chart-card">
+            <h3 style="font-size: 15px; margin-bottom: 16px;">일별 사용량 (최근 7일)</h3>
+            <canvas id="userChart" height="110"></canvas>
+        </div>
+
+        <div>
+            <div class="side-card">
+                <h3 style="font-size: 15px; margin-bottom: 12px;">토큰 상세 구성</h3>
+                <div class="info-row"><span>Input 토큰 (질문)</span><span id="u-input" style="font-weight: bold;">0</span></div>
+                <div class="info-row"><span>Output 토큰 (응답)</span><span id="u-output" style="font-weight: bold; color: #06B6D4;">0</span></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let chartInstance = null;
+
+        function getUsernameFromUrl() {
+            const pathSegments = window.location.pathname.split('/').filter(Boolean);
+            if (pathSegments.length >= 2) {
+                return decodeURIComponent(pathSegments[1]);
+            }
+            return "임혜량";
+        }
+
+        const username = getUsernameFromUrl();
+
+        document.getElementById('user-display-name').innerText = username;
+        document.getElementById('user-avatar').innerText = username.charAt(0);
+
+        async function fetchUserData() {
+            try {
+                const res = await fetch(`/api/user/${encodeURIComponent(username)}/tokens`);
+                const data = await res.json();
+
+                document.getElementById('user-today').innerText = (data.today_tokens || 0).toLocaleString();
+                document.getElementById('user-weekly').innerText = (data.weekly_tokens || 0).toLocaleString();
+                document.getElementById('user-monthly').innerText = (data.monthly_tokens || 0).toLocaleString();
+                document.getElementById('user-req-count').innerText = (data.total_requests || 0) + "건";
+                document.getElementById('u-input').innerText = (data.input_tokens || 0).toLocaleString();
+                document.getElementById('u-output').innerText = (data.output_tokens || 0).toLocaleString();
+
+                // 1. 회당 평균 토큰 계산 (총 토큰 / 총 요청 건수)
+                const reqCount = data.total_requests || 0;
+                const perReqTokens = reqCount > 0 ? Math.round(data.today_tokens / reqCount) : 0;
+                document.getElementById('user-per-req-tokens').innerText = perReqTokens.toLocaleString();
+
+                // 2. 주간 일 평균 토큰 계산 (최근 7일 기준)
+                const weeklyAvgTokens = Math.round((data.weekly_tokens || 0) / 7);
+                document.getElementById('user-avg-tokens').innerText = weeklyAvgTokens.toLocaleString();
+
+                if (chartInstance && data.daily_usage) {
+                    chartInstance.data.datasets[0].data = data.daily_usage;
+                    chartInstance.update();
+                }
+            } catch (err) {
+                console.error("데이터 동기화 실패:", err);
+            }
+        }
+
+        const ctx = document.getElementById('userChart').getContext('2d');
+        chartInstance = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: ['D-6', 'D-5', 'D-4', 'D-3', 'D-2', '어제', '오늘'],
+                datasets: [{
+                    label: '토큰 사용량',
+                    data: [0, 0, 0, 0, 0, 0, 0],
+                    borderColor: '#6366F1',
+                    backgroundColor: 'rgba(99, 102, 241, 0.15)',
+                    fill: true,
+                    tension: 0.3
+                }]
+            },
+            options: {
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { grid: { color: '#1E293B' }, ticks: { color: '#64748B' } },
+                    y: { grid: { color: '#1E293B' }, ticks: { color: '#64748B' } }
+                }
+            }
+        });
+
+        fetchUserData();
+        setInterval(fetchUserData, 3000);
+    </script>
+</body>
+</html>
