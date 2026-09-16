@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from datetime import date, datetime, timedelta
 from typing import Any, Callable
 
@@ -651,12 +652,92 @@ def is_past_range(end_date: str, today: str) -> bool:
 # 옮겨 적기만 하고, 실제 날짜는 여기서 계산한다. 모델이 YYYY-MM-DD를 직접
 # 만들면 형식은 맞는데 날짜가 틀린 값이 노션에 그대로 남는다.
 
-# 노션 캘린더 '유형' select에 실제로 있는 선택지(2026-09-15 조회).
-# 없는 이름을 보내면 노션이 새 선택지를 만들어 버린다.
+# 노션이 응답하지 않을 때 쓰는 기본 선택지(2026-09-15 조회).
+# 평소에는 calendar_choices()가 노션에서 읽어 온 목록을 쓴다.
+# 없는 이름을 보내면 노션이 새 선택지를 만들어 버리므로 반드시 대조한다.
 CALENDAR_TYPES = (
     "회의", "정기회의", "외부미팅", "보고", "리뷰", "시연", "시험", "현장조사",
     "출장", "교육", "행사", "공지", "마일스톤", "휴가", "휴일",
 )
+CALENDAR_PROJECTS = (
+    "스마트물류센터 디지털트윈 플랫폼 구축",
+    "정밀유도무기 디지털트윈 시뮬레이션 개발",
+    "(사내 공통/일반)",
+)
+PROP_TYPE = "유형"
+PROP_PROJECT = "프로젝트명"
+_FALLBACK_CHOICES = {PROP_TYPE: CALENDAR_TYPES, PROP_PROJECT: CALENDAR_PROJECTS}
+
+# 선택지 목록을 이만큼 기억한다. 노션에 항목을 추가해도 이 시간 안에 반영되므로
+# 봇을 재시작하지 않아도 된다. 매 예약마다 조회하면 느려지고 Rate Limit에
+# 가까워지므로 캐시한다. `/봇이름 새로고침`으로 즉시 비울 수도 있다.
+CHOICES_TTL_SEC = 600
+
+_choices_cache: dict[str, tuple[str, ...]] = {}
+_choices_read_at = 0.0
+
+
+def clear_choices_cache() -> None:
+    """다음 조회 때 노션에서 다시 읽게 한다."""
+    global _choices_read_at
+    _choices_cache.clear()
+    _choices_read_at = 0.0
+
+
+async def _read_choices() -> dict[str, tuple[str, ...]]:
+    """캘린더 DB에서 select 속성의 선택지를 읽는다."""
+    key = settings.notion_privatespace_api or settings.notion_api_key
+    db_id = (settings.notion_calendar_db_id or "").replace("-", "")
+    if not key or not db_id:
+        raise NotionWriteError("노션 키 또는 캘린더 DB가 설정되지 않았습니다.")
+
+    client = AsyncClient(auth=key)
+    try:
+        data_source_id = await resolve_data_source_id(client, db_id)
+        info = await _with_backoff(
+            client.data_sources.retrieve, data_source_id=data_source_id
+        )
+    finally:
+        await client.aclose()
+
+    properties = info.get("properties") or {}
+    found: dict[str, tuple[str, ...]] = {}
+    for prop_name in (PROP_TYPE, PROP_PROJECT):
+        options = ((properties.get(prop_name) or {}).get("select") or {}).get("options", [])
+        names = tuple(o["name"] for o in options if o.get("name"))
+        if names:
+            found[prop_name] = names
+    return found
+
+
+async def calendar_choices(force: bool = False) -> dict[str, tuple[str, ...]]:
+    """유형·프로젝트명 선택지. {"유형": (...), "프로젝트명": (...)}
+
+    Args:
+        force: True면 캐시를 무시하고 노션에서 다시 읽는다.
+
+    노션을 읽지 못하면 직전에 읽어 둔 목록을, 그것도 없으면 코드의 기본값을
+    돌려준다. 선택지를 못 읽었다고 예약을 실패시키지 않는다.
+    """
+    global _choices_read_at
+    fresh = time.monotonic() - _choices_read_at < CHOICES_TTL_SEC
+    if _choices_cache and fresh and not force:
+        return dict(_choices_cache)
+
+    try:
+        found = await _read_choices()
+    except Exception:
+        logger.warning("선택지를 읽지 못했습니다. 이전 목록을 씁니다.", exc_info=True)
+        return dict(_choices_cache) or dict(_FALLBACK_CHOICES)
+
+    _choices_cache.clear()
+    _choices_cache.update({**_FALLBACK_CHOICES, **found})
+    _choices_read_at = time.monotonic()
+    logger.info(
+        "선택지 갱신: 유형 %d개, 프로젝트명 %d개",
+        len(_choices_cache[PROP_TYPE]), len(_choices_cache[PROP_PROJECT]),
+    )
+    return dict(_choices_cache)
 
 DATE_EXACT = "exact"
 DATE_DAYS_LATER = "days_later"
@@ -766,20 +847,30 @@ def resolve_event_date(spec: dict[str, Any], today: str) -> tuple[str, str]:
     return start.isoformat(), end.isoformat() if end else ""
 
 
-def prepare_reserved_event(event: dict[str, Any], today: str) -> dict[str, Any]:
+def prepare_reserved_event(
+    event: dict[str, Any],
+    today: str,
+    choices: dict[str, tuple[str, ...]] | None = None,
+) -> dict[str, Any]:
     """모델이 뽑은 일정 한 건을 노션에 넣을 수 있는 모양으로 만든다.
 
-    date_type이 있으면 날짜를 계산해 date/end_date를 채운다. 유형이 선택지에
-    없으면 비운다(새 선택지가 생기지 않게). 원본 dict는 바꾸지 않는다.
+    date_type이 있으면 날짜를 계산해 date/end_date를 채운다. 유형·프로젝트명이
+    선택지에 없으면 비운다(노션은 없는 이름을 받으면 새 선택지를 만든다).
+    원본 dict는 바꾸지 않는다.
+
+    Args:
+        choices: calendar_choices() 결과. 주지 않으면 코드의 기본값을 쓴다.
     """
     prepared = dict(event)
     if prepared.get("date_type"):
         prepared["date"], prepared["end_date"] = resolve_event_date(prepared, today)
 
-    kind = _field(prepared, "type")
-    if kind and kind not in CALENDAR_TYPES:
-        logger.info("유형 '%s'은 캘린더 선택지에 없어 비웁니다.", kind)
-        prepared["type"] = ""
+    allowed = choices or _FALLBACK_CHOICES
+    for key, prop_name in (("type", PROP_TYPE), ("project", PROP_PROJECT)):
+        value = _field(prepared, key)
+        if value and value not in allowed.get(prop_name, ()):
+            logger.info("%s '%s'은 캘린더 선택지에 없어 비웁니다.", prop_name, value)
+            prepared[key] = ""
     return prepared
 
 

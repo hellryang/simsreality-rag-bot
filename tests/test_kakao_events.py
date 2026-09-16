@@ -318,7 +318,7 @@ def test_a_word_starting_with_save_is_not_a_command(client, stored):
 
 
 async def test_no_events_found_is_reported_plainly(monkeypatch):
-    async def no_events(chat_log, today):
+    async def no_events(chat_log, today, choices=None):
         return []
 
     monkeypatch.setattr(
@@ -337,7 +337,7 @@ async def test_no_events_found_is_reported_plainly(monkeypatch):
 async def test_an_extraction_failure_does_not_raise(monkeypatch):
     """Claude 호출이 터져도 예외가 밖으로 나가면 안 된다."""
 
-    async def boom(chat_log, today):
+    async def boom(chat_log, today, choices=None):
         raise RuntimeError("Claude 죽음")
 
     monkeypatch.setattr(kakao_events.claude_service, "extract_schedule_events", boom)
@@ -348,7 +348,7 @@ async def test_an_extraction_failure_does_not_raise(monkeypatch):
 
 
 async def test_a_registered_event_is_reported_with_its_link(monkeypatch):
-    async def one_event(chat_log, today):
+    async def one_event(chat_log, today, choices=None):
         return [{"name": "킥오프 회의", "date": "2026-09-15", "time": "15:00"}]
 
     async def fake_create(event, database_id=None):
@@ -377,7 +377,7 @@ async def test_a_partial_failure_reports_both_sides(monkeypatch):
     모른 채 다시 전부 입력하게 된다.
     """
 
-    async def two_events(chat_log, today):
+    async def two_events(chat_log, today, choices=None):
         return [
             {"name": "킥오프", "date": "2026-09-15"},
             {"name": "언젠가 회의", "date": "다음주쯤"},

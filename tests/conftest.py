@@ -22,3 +22,24 @@ _DUMMY_ENV = {
 for _key, _value in _DUMMY_ENV.items():
     # 이미 진짜 값이 들어 있으면 덮어쓰지 않는다.
     os.environ.setdefault(_key, _value)
+
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def calendar_choices_offline(monkeypatch):
+    """선택지 조회는 노션을 부른다. 테스트에서는 기본 목록으로 대신한다.
+
+    예약 등록 경로가 calendar_choices()를 거치므로, 막지 않으면 테스트가
+    실제 노션 API를 호출한다.
+    """
+    from app.services import notion_service
+
+    async def fixed(force: bool = False):
+        return {
+            notion_service.PROP_TYPE: notion_service.CALENDAR_TYPES,
+            notion_service.PROP_PROJECT: notion_service.CALENDAR_PROJECTS,
+        }
+
+    monkeypatch.setattr(notion_service, "calendar_choices", fixed)

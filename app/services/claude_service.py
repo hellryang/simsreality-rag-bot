@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import re
 from functools import lru_cache
@@ -15,7 +16,12 @@ import anthropic
 
 from app.core.config import settings
 from app.models.schemas import NO_CONTEXT_ANSWER, Answer, Chunk, Citation, SearchHit
-from app.services.notion_service import CALENDAR_TYPES
+from app.services.notion_service import (
+    CALENDAR_PROJECTS,
+    CALENDAR_TYPES,
+    PROP_PROJECT,
+    PROP_TYPE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -713,6 +719,15 @@ SCHEDULE_TOOL: dict = {
                             "enum": list(CALENDAR_TYPES),
                             "description": "유형. 목록에서 고른다. 맞는 것이 없으면 넣지 않는다.",
                         },
+                        "project": {
+                            "type": "string",
+                            "enum": list(CALENDAR_PROJECTS),
+                            "description": (
+                                "어느 프로젝트의 일정인지. 목록에서 고른다. "
+                                "문장에 프로젝트를 알 수 있는 말이 없으면 넣지 않는다. "
+                                "짐작해서 채우지 않는다."
+                            ),
+                        },
                         "memo": {
                             "type": "string",
                             "description": "일정에 대한 짧은 설명.",
@@ -725,6 +740,24 @@ SCHEDULE_TOOL: dict = {
         "required": ["events"],
     },
 }
+
+
+def build_schedule_tool(choices: dict[str, tuple[str, ...]] | None = None) -> dict:
+    """SCHEDULE_TOOL의 유형·프로젝트명 선택지를 노션에서 읽은 값으로 바꾼다.
+
+    노션에 항목을 추가해도 코드를 고칠 필요가 없게 하려는 것이다.
+    choices를 주지 않으면 코드에 적어 둔 기본값 그대로다.
+    """
+    if not choices:
+        return SCHEDULE_TOOL
+
+    tool = copy.deepcopy(SCHEDULE_TOOL)
+    properties = tool["input_schema"]["properties"]["events"]["items"]["properties"]
+    for key, prop_name in (("type", PROP_TYPE), ("project", PROP_PROJECT)):
+        options = choices.get(prop_name)
+        if options:
+            properties[key]["enum"] = list(options)
+    return tool
 
 
 def build_schedule_system_prompt(today: str) -> str:
@@ -753,7 +786,11 @@ def build_schedule_system_prompt(today: str) -> str:
 6. 유형은 주어진 목록에서 고른다. 맞는 것이 없으면 비워 둔다."""
 
 
-async def extract_schedule_events(chat_log: str, today: str) -> list[dict]:
+async def extract_schedule_events(
+    chat_log: str,
+    today: str,
+    choices: dict[str, tuple[str, ...]] | None = None,
+) -> list[dict]:
     """대화 내용에서 일정을 구조화해 뽑는다.
 
     Args:
@@ -778,7 +815,7 @@ async def extract_schedule_events(chat_log: str, today: str) -> list[dict]:
         max_tokens=MAX_TOKENS,
         temperature=TEMPERATURE,
         system=build_schedule_system_prompt(today),
-        tools=[SCHEDULE_TOOL],
+        tools=[build_schedule_tool(choices)],
         # 모델이 설명만 늘어놓지 않고 반드시 도구를 쓰게 강제한다.
         tool_choice={"type": "tool", "name": SCHEDULE_TOOL["name"]},
         messages=[{"role": "user", "content": chat_log}],

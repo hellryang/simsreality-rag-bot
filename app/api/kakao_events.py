@@ -228,6 +228,8 @@ CMD_SAVE = "저장"
 # 콜백을 보내지 않고 "내용을 입력하라"는 자체 UI를 띄운다. 그래서 뒤에
 # 붙일 키워드가 필요하다: `/연습용 메뉴`.
 CMD_MENU = {"메뉴", "도움말", "menu", "help"}
+# 노션에 유형·프로젝트명을 추가한 뒤 10분을 기다리지 않고 바로 쓰고 싶을 때.
+CMD_REFRESH = {"새로고침", "refresh"}
 
 
 async def _handle_plain_message(
@@ -252,6 +254,10 @@ async def _handle_plain_message(
         await _show_menu(conversation_id)
         return {"status": "menu"}
 
+    if text.strip() in CMD_REFRESH:
+        background_tasks.add_task(_refresh_choices, conversation_id)
+        return {"status": "refresh"}
+
     # "저장 <내용>" — 내용을 벡터 DB에 저장한다.
     if text.startswith(CMD_SAVE + " "):
         content = text[len(CMD_SAVE):].strip()
@@ -267,6 +273,28 @@ async def _handle_plain_message(
         "바로 저장하려면 '저장 <내용>'을 보내주세요.",
     )
     return {"status": "hint"}
+
+
+async def _refresh_choices(conversation_id: str) -> None:
+    """노션의 유형·프로젝트명 선택지를 지금 다시 읽는다.
+
+    평소에는 10분마다 저절로 반영되지만, 노션에 항목을 추가하고 바로
+    예약해야 할 때 쓴다.
+    """
+    notion_service.clear_choices_cache()
+    try:
+        choices = await notion_service.calendar_choices(force=True)
+    except Exception:
+        logger.exception("선택지 새로고침 실패")
+        await _reply_to_room(conversation_id, "선택지를 새로 읽지 못했습니다.")
+        return
+
+    await _reply_to_room(
+        conversation_id,
+        "노션 선택지를 새로 읽었습니다.\n"
+        f" · 유형 {len(choices.get(notion_service.PROP_TYPE, ()))}개\n"
+        f" · 프로젝트명 {len(choices.get(notion_service.PROP_PROJECT, ()))}개",
+    )
 
 
 async def _show_menu(conversation_id: str) -> None:
@@ -414,8 +442,12 @@ async def _register_notion_events(chat_log: str, today: str) -> list[str]:
     모델이 YYYY-MM-DD를 지키지 않는 경우가 있으므로 create_calendar_event가
     형식을 한 번 더 검증한다. 형식이 틀린 건만 건너뛰고 나머지는 등록한다.
     """
+    # 유형·프로젝트명 선택지는 노션에서 읽는다(10분 캐시). 노션에 항목이
+    # 늘어도 코드를 고치지 않게 하려는 것이다. 읽지 못하면 기본값으로 돈다.
+    choices = await notion_service.calendar_choices()
+
     try:
-        events = await claude_service.extract_schedule_events(chat_log, today)
+        events = await claude_service.extract_schedule_events(chat_log, today, choices)
     except Exception:
         logger.exception("일정 추출 실패")
         return ["등록에 실패했습니다. (일정을 읽어내지 못했습니다)"]
@@ -433,7 +465,7 @@ async def _register_notion_events(chat_log: str, today: str) -> list[str]:
     for event in events:
         try:
             # 날짜 계산은 여기서 한다. 모델은 "다음 주 화요일"을 분류만 했다.
-            event = notion_service.prepare_reserved_event(event, today)
+            event = notion_service.prepare_reserved_event(event, today, choices)
             # 겹침은 등록 **전에** 조회한다. 등록 뒤에 보면 방금 넣은 일정이
             # 자기 자신과 겹친다고 나온다. 겹쳐도 등록은 한다(알림만).
             conflicts = await _find_conflicts(event)
@@ -464,6 +496,8 @@ async def _register_notion_events(chat_log: str, today: str) -> list[str]:
                 event.get("time", ""),
                 event.get("place", ""),
                 f"참석 {attendees}" if attendees else "",
+                # 프로젝트를 잘못 고르면 여기서 보인다(날짜 요일 표시와 같은 장치).
+                event.get("project", ""),
             )
             if part
         )

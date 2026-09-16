@@ -133,7 +133,7 @@ def _patch(monkeypatch, extracted_events, existing=None, query_error=False):
     created: list[dict] = []
     queried: list[tuple[str, str]] = []
 
-    async def extracted(chat_log, today):
+    async def extracted(chat_log, today, choices=None):
         return extracted_events
 
     async def fake_query(start, end, database_id=None):

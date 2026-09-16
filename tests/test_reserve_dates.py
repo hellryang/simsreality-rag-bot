@@ -182,7 +182,7 @@ def test_prepare_leaves_an_already_dated_event_alone():
 async def test_the_dm_shows_weekday_attendees_and_the_computed_date(monkeypatch):
     """날짜가 틀려도 사용자가 DM만 보고 알아챌 수 있어야 한다."""
 
-    async def extracted(chat_log, today):
+    async def extracted(chat_log, today, choices=None):
         return [
             {
                 "name": "킥오프 회의",
@@ -217,7 +217,7 @@ async def test_the_dm_shows_weekday_attendees_and_the_computed_date(monkeypatch)
 
 
 async def test_the_dm_flags_a_date_that_already_passed(monkeypatch):
-    async def extracted(chat_log, today):
+    async def extracted(chat_log, today, choices=None):
         return [{"name": "주간회의", "date_type": "this_week", "weekday": "월"}]
 
     async def fake_create(event, database_id=None):
@@ -232,7 +232,7 @@ async def test_the_dm_flags_a_date_that_already_passed(monkeypatch):
 
 
 async def test_an_unresolvable_date_is_reported_and_others_still_register(monkeypatch):
-    async def extracted(chat_log, today):
+    async def extracted(chat_log, today, choices=None):
         return [
             {"name": "킥오프", "date_type": "tomorrow"},
             {"name": "이상한 회의", "date_type": "exact", "month": 2, "day": 30},
