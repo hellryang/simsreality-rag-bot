@@ -26,6 +26,10 @@ def filled_store(tmp_path):
     tmp_path는 pytest가 테스트마다 새로 만들어 주는 빈 폴더다.
     실제 chroma_data를 건드리지 않으려고 쓴다.
     """
+    # 벡터 패키지(chromadb·sentence-transformers)는 requirements 에서 선택이다.
+    # 설치하지 않은 환경(배포 서버, CI)에서는 이 테스트를 건너뛴다.
+    pytest.importorskip("chromadb")
+    pytest.importorskip("sentence_transformers")
     from app.services.vector_store import VectorStore
 
     store = VectorStore(persist_dir=str(tmp_path))
@@ -49,6 +53,9 @@ async def test_empty_store_skips_the_claude_call(tmp_path, monkeypatch):
     것이다. 개발자마다 .env가 달라 테스트 결과가 갈리면 안 되므로
     로컬 설정에 기대지 않고 여기서 못 박는다.
     """
+    # 이 경로는 VectorStore 를 지연 import 한다. 벡터 패키지를 설치하지 않은
+    # 환경(배포 서버, CI)에서는 건너뛴다.
+    pytest.importorskip("chromadb")
     monkeypatch.setattr(settings, "use_vector_search", True)
     from app.services.qa_pipeline import answer_question
 
@@ -66,6 +73,9 @@ async def test_with_vector_search_off_the_store_is_never_touched(tmp_path, monke
     (torch 포함 약 390MB)이 프로세스에 올라온다. 그 비용을 안 내는 것이
     이 스위치의 요점이다.
     """
+    # 이 경로는 VectorStore 를 지연 import 한다. 벡터 패키지를 설치하지 않은
+    # 환경(배포 서버, CI)에서는 건너뛴다.
+    pytest.importorskip("chromadb")
     monkeypatch.setattr(settings, "use_vector_search", False)
 
     # VectorStore는 함수 안에서 지연 import 한다(벡터 패키지를 설치하지 않은
@@ -110,6 +120,9 @@ def test_search_documents_returns_hits_without_claude(filled_store):
 
 def test_search_returns_empty_list_when_store_is_empty(tmp_path):
     """빈 DB에 검색해도 예외 없이 빈 목록을 돌려준다."""
+    # 이 경로는 VectorStore 를 지연 import 한다. 벡터 패키지를 설치하지 않은
+    # 환경(배포 서버, CI)에서는 건너뛴다.
+    pytest.importorskip("chromadb")
     from app.services.qa_pipeline import search_documents
 
     assert search_documents("아무 질문", persist_dir=str(tmp_path)) == []

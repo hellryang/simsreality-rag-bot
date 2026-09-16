@@ -112,6 +112,9 @@ def test_embed_texts_returns_one_vector_per_input():
 
     첫 실행 때 모델 약 500MB를 내려받으므로 이 테스트만 느릴 수 있다.
     """
+    # 임베딩 모델(sentence-transformers)은 requirements 에서 선택이다.
+    # 설치하지 않은 환경(배포 서버, CI)에서는 건너뛴다.
+    pytest.importorskip("sentence_transformers")
     from app.services.embedder import embed_texts
 
     vectors = embed_texts(["배포 일정이 어떻게 되나요", "회의록 정리"])
@@ -133,6 +136,10 @@ def _sample_store(tmp_path):
     임베딩이 불안정해서, 관련 없는 문서와 유사도 차이가 0.01 수준까지 좁아진다.
     실제 수집물은 수백 자 단위이므로 그 조건으로 검증한다.
     """
+    # 벡터 패키지(chromadb·sentence-transformers)는 requirements 에서 선택이다.
+    # 설치하지 않은 환경(배포 서버, CI)에서는 이 테스트를 건너뛴다.
+    pytest.importorskip("chromadb")
+    pytest.importorskip("sentence_transformers")
     from app.services.vector_store import VectorStore
 
     deploy = (
@@ -192,6 +199,10 @@ def test_adding_same_chunk_twice_upserts(tmp_path):
 
     chunk_id가 같으면 덮어쓰기(upsert)로 처리되어야 한다.
     """
+    # 벡터 패키지(chromadb·sentence-transformers)는 requirements 에서 선택이다.
+    # 설치하지 않은 환경(배포 서버, CI)에서는 이 테스트를 건너뛴다.
+    pytest.importorskip("chromadb")
+    pytest.importorskip("sentence_transformers")
     from app.services.vector_store import VectorStore
 
     store = VectorStore(persist_dir=str(tmp_path))
@@ -284,6 +295,10 @@ def _doc(title: str, source: str = "kakaowork", submitted_by: str = "") -> Docum
 def _filled_store(tmp_path, *documents: Document):
     """문서를 조각내어 넣은 저장소. import는 이 파일의 관례대로 함수 안에서."""
     from app.services.embedder import chunk_documents
+    # 벡터 패키지(chromadb·sentence-transformers)는 requirements 에서 선택이다.
+    # 설치하지 않은 환경(배포 서버, CI)에서는 이 테스트를 건너뛴다.
+    pytest.importorskip("chromadb")
+    pytest.importorskip("sentence_transformers")
     from app.services.vector_store import VectorStore
 
     store = VectorStore(persist_dir=str(tmp_path))
@@ -354,6 +369,10 @@ def _kakao_doc(text, submitted_by, when):
 
 def test_list_by_submitter_returns_only_that_users_docs(tmp_path):
     from app.services.embedder import chunk_documents
+    # 벡터 패키지(chromadb·sentence-transformers)는 requirements 에서 선택이다.
+    # 설치하지 않은 환경(배포 서버, CI)에서는 이 테스트를 건너뛴다.
+    pytest.importorskip("chromadb")
+    pytest.importorskip("sentence_transformers")
     from app.services.vector_store import VectorStore
 
     store = VectorStore(persist_dir=str(tmp_path))
@@ -370,6 +389,10 @@ def test_list_by_submitter_returns_only_that_users_docs(tmp_path):
 
 def test_list_by_submitter_is_newest_first(tmp_path):
     from app.services.embedder import chunk_documents
+    # 벡터 패키지(chromadb·sentence-transformers)는 requirements 에서 선택이다.
+    # 설치하지 않은 환경(배포 서버, CI)에서는 이 테스트를 건너뛴다.
+    pytest.importorskip("chromadb")
+    pytest.importorskip("sentence_transformers")
     from app.services.vector_store import VectorStore
 
     store = VectorStore(persist_dir=str(tmp_path))
@@ -385,6 +408,10 @@ def test_list_by_submitter_is_newest_first(tmp_path):
 
 def test_delete_by_ids_removes_the_chosen_chunk(tmp_path):
     from app.services.embedder import chunk_documents
+    # 벡터 패키지(chromadb·sentence-transformers)는 requirements 에서 선택이다.
+    # 설치하지 않은 환경(배포 서버, CI)에서는 이 테스트를 건너뛴다.
+    pytest.importorskip("chromadb")
+    pytest.importorskip("sentence_transformers")
     from app.services.vector_store import VectorStore
 
     store = VectorStore(persist_dir=str(tmp_path))
