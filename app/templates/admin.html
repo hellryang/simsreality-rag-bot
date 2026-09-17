@@ -76,10 +76,10 @@
         <div class="status-badge">● 실시간 연동 중</div>
     </div>
 
-    <!-- 상단 지표 카드 (연간 토큰량 반영) -->
+    <!-- 상단 지표 카드 (첫 번째 카드를 연간 토큰 사용량으로 변경) -->
     <div class="metrics-grid">
         <div class="card" style="border-left: 4px solid var(--accent-purple);">
-            <div class="card-label">연간 누적 토큰 사용량</div>
+            <div class="card-label">연간 토큰 사용량</div>
             <div class="card-value" id="annual-tokens" style="color: #818CF8;">0</div>
             <div class="card-sub" id="annual-sub">연간 한도: 12,000,000 토큰 중 0.0% 사용</div>
         </div>
@@ -147,7 +147,7 @@
             </div>
         </div>
 
-        <!-- 우측 영역 (연간 토큰 한도 기준) -->
+        <!-- 우측 영역 -->
         <div>
             <div class="side-card">
                 <h3 style="font-size: 15px; margin-bottom: 12px;">Claude API 연간 한도</h3>
@@ -197,11 +197,11 @@
                 const tokenRes = await fetch('/api/tokens');
                 const data = await tokenRes.json();
 
-                // 연간 토큰 지표 카드 연동
                 const annualTokens = data.annual_tokens || 0;
                 const annualLimit = data.annual_limit || 12000000;
                 const usagePercent = data.annual_usage_percentage || 0;
 
+                // 연간 토큰 카드 연동
                 document.getElementById('annual-tokens').innerText = annualTokens.toLocaleString();
                 document.getElementById('annual-sub').innerText = `연간 한도: ${annualLimit.toLocaleString()} 토큰 중 ${usagePercent}% 사용`;
 
@@ -209,7 +209,6 @@
                 document.getElementById('monthly-tokens').innerText = (data.monthly_tokens || 0).toLocaleString();
                 document.getElementById('total-requests').innerText = (data.total_requests || 0) + "건";
 
-                // 하단 및 우측 지표 연동
                 document.getElementById('footer-req').innerText = (data.total_requests || 0) + "건";
                 document.getElementById('footer-tok').innerText = (data.today_tokens || 0).toLocaleString();
                 document.getElementById('footer-in').innerText = (data.input_tokens || 0).toLocaleString();
@@ -224,7 +223,6 @@
                 document.getElementById('side-output').innerText = (data.output_tokens || 0).toLocaleString();
                 document.getElementById('side-total').innerText = (data.today_tokens || 0).toLocaleString();
 
-                // 유형별 질의 분포 연동
                 document.getElementById('summary-percent').innerText = (data.summary_percent || 0) + "%";
                 document.getElementById('summary-count').innerText = (data.summary_count || 0) + "건 (이번 주)";
                 document.getElementById('summary-bar').style.width = (data.summary_percent || 0) + "%";
@@ -233,13 +231,11 @@
                 document.getElementById('notion-count').innerText = (data.notion_count || 0) + "건 (이번 주)";
                 document.getElementById('notion-bar').style.width = (data.notion_percent || 0) + "%";
 
-                // 차트 업데이트
                 if (chartInstance && data.daily_usage) {
                     chartInstance.data.datasets[0].data = data.daily_usage;
                     chartInstance.update();
                 }
 
-                // 로그 데이터 표 연동
                 const logRes = await fetch('/api/logs');
                 const logData = await logRes.json();
                 const tbody = document.getElementById('log-table-body');

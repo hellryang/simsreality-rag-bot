@@ -9,7 +9,7 @@ import sqlite3
 app = FastAPI()
 templates = Jinja2Templates(directory="app/templates")
 
-# 연간 토큰 한도 설정 (예: 12,000,000 토큰 / 필요시 수치 변경 가능)
+# 연간 토큰 한도 (기본 12,000,000 토큰 설정)
 ANNUAL_TOKEN_LIMIT = 12000000
 
 def init_db():
@@ -71,7 +71,7 @@ async def get_tokens():
     notion_percent = round((notion_count / req_count) * 100) if req_count > 0 else 0
     
     # 연간 토큰 관련 계산
-    annual_tokens = total_tok  # 누적 사용 토큰
+    annual_tokens = total_tok
     remaining_annual_tokens = max(0, ANNUAL_TOKEN_LIMIT - annual_tokens)
     annual_usage_percentage = round((annual_tokens / ANNUAL_TOKEN_LIMIT) * 100, 1) if ANNUAL_TOKEN_LIMIT > 0 else 0
     
