@@ -11,7 +11,10 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
-    notion_api_key: str
+    # 사내 문서 수집(collect_notion_documents / collect_notion_page_tree)에만 쓴다.
+    # 캘린더 조회·등록은 아래 notion_privatespace_api 를 쓴다.
+    # 필수로 두면 벡터 검색을 끈 배포에서도 쓰지 않는 키를 채워야 앱이 기동한다.
+    notion_api_key: str | None = None
     # 수집 대상은 둘 중 하나만 있으면 된다.
     #   notion_database_id  : 문서가 데이터베이스(표)에 행으로 쌓여 있을 때
     #   notion_root_page_id : 문서가 어떤 페이지 밑에 하위 페이지로 달려 있을 때
@@ -55,6 +58,8 @@ class Settings(BaseSettings):
     #
     # 기본값은 True다. Slack 팀도 같은 파이프라인을 쓰므로 공용 동작을
     # 바꾸지 않고, 끄고 싶은 환경만 .env에서 false로 둔다.
+    # (배포 서버는 false. requirements.txt 에서 chromadb·sentence-transformers 를
+    #  선택으로 돌렸기 때문에, true 로 두면 질문하기가 실패한다.)
     use_vector_search: bool = True
 
 

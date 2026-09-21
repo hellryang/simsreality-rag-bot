@@ -252,6 +252,12 @@ async def collect_notion_documents(limit: int | None = None) -> list[dict[str, A
     Returns:
         [{"text", "source", "url", "title", "created_at"}, ...]
     """
+    if not settings.notion_api_key:
+        raise NotionWriteError(
+            "문서 수집용 NOTION_API_KEY가 없습니다. "
+            "캘린더 기능만 쓴다면 이 함수는 호출하지 않습니다."
+        )
+
     client = AsyncClient(auth=settings.notion_api_key)
     documents: list[dict[str, Any]] = []
     cursor: str | None = None
@@ -347,6 +353,12 @@ async def collect_notion_page_tree(
     Returns:
         [{"text", "source", "url", "title", "created_at"}, ...]
     """
+    if not settings.notion_api_key:
+        raise NotionWriteError(
+            "문서 수집용 NOTION_API_KEY가 없습니다. "
+            "캘린더 기능만 쓴다면 이 함수는 호출하지 않습니다."
+        )
+
     client = AsyncClient(auth=settings.notion_api_key)
     documents: list[dict[str, Any]] = []
     visited: set[str] = set()
