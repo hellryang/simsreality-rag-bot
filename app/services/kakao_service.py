@@ -333,19 +333,24 @@ def _button(
 
 
 def welcome_blocks(upload_url: str = "") -> tuple[str, list[dict[str, Any]]]:
-    """봇이 먼저 보내는 안내 메시지.
+    """`/봇이름 메뉴`로 띄우는 안내 메시지.
 
     KakaoWork 봇은 사용자가 채팅창에 그냥 친 문장을 받을 수 없다.
     자유 문장은 [질문하기] → 모달 입력칸을 거쳐야 들어온다.
     파일은 API 자체가 없어 [파일 올리기] → 웹 업로드로 받는다.
+
+    카카오워크 관리자에 등록하는 '시작 메시지'와는 별개다. 그쪽은 봇과 처음
+    대화할 때 카카오워크가 보내고, 이 함수는 메뉴 명령에 답할 때 쓴다.
+    둘의 버튼과 문구를 같게 유지해야 사용자가 혼란스럽지 않다.
     """
     buttons = [
         _button("질문하기", ACTION_CALL_MODAL, action_name=BUTTON_ASK, style="primary"),
         _button("예약하기", ACTION_CALL_MODAL, action_name=BUTTON_RESERVE),
     ]
     body = (
-        "무엇이든 물어보세요. Notion·Slack·KakaoWork에 쌓인 문서에서 찾아 "
-        "출처와 함께 답해드립니다."
+        "일정을 물어보거나 등록할 수 있습니다.\n"
+        "· [질문하기] 노션 캘린더에서 일정·참석자·빈 시간을 찾아 답합니다.\n"
+        "· [예약하기] 한 줄로 적으면 노션 캘린더에 등록합니다."
     )
 
     if upload_url:
