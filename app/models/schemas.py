@@ -40,6 +40,20 @@ class Document(BaseModel):
     url: str = ""
     title: str = ""
     created_at: str = ""
+    # 사용자가 봇에 직접 제출한 문서에만 채워진다(카카오워크). Notion·Slack은
+    # 원본에 작성자가 남지만 이쪽은 우리가 기록하지 않으면 추적할 길이 없다.
+    # 잘못된 내용을 지울 때 누가 올렸는지 알아야 한다.
+    submitted_by: str = ""
+    # 카카오워크 대화가 어느 채팅방에서 왔는지. 방별로 저장·검색·삭제하려면
+    # 필요하다. 방 이름은 바뀔 수 있으므로 표시용 라벨로만 쓰고, 검색·삭제는
+    # 이 값으로 거른다. 부서장방/매니저방처럼 방을 골라 관리하기 위한 것.
+    room_label: str = ""
+    # 작성자·작성일. 메시지 한 건이 한 문서일 때만 채운다(xlsx 적재 등).
+    # 본문에도 들어 있지만 메타데이터로 두면 출처 표시에서 파싱 없이 꺼내
+    # 쓰고, 날짜·작성자로 필터링할 수 있다. 여러 명이 섞인 문서(모달
+    # 붙여넣기)에는 채우지 않는다.
+    sender: str = ""
+    msg_date: str = ""
 
     _check_text = field_validator("text")(_require_non_empty)
 
@@ -57,6 +71,10 @@ class Chunk(BaseModel):
     title: str = ""
     created_at: str = ""
     chunk_index: int = 0
+    submitted_by: str = ""
+    room_label: str = ""
+    sender: str = ""
+    msg_date: str = ""
 
     @classmethod
     def from_document(cls, document: Document, text: str, index: int) -> "Chunk":
@@ -75,6 +93,10 @@ class Chunk(BaseModel):
             title=document.title,
             created_at=document.created_at,
             chunk_index=index,
+            submitted_by=document.submitted_by,
+            room_label=document.room_label,
+            sender=document.sender,
+            msg_date=document.msg_date,
         )
 
     def metadata(self) -> dict[str, str | int]:
@@ -89,7 +111,32 @@ class Chunk(BaseModel):
             "title": self.title,
             "created_at": self.created_at,
             "chunk_index": self.chunk_index,
+            "submitted_by": self.submitted_by,
+            "room_label": self.room_label,
+            "sender": self.sender,
+            "msg_date": self.msg_date,
         }
+
+
+class StoredDocument(BaseModel):
+    """벡터 DB에 들어 있는 문서 한 건의 요약.
+
+    저장 단위는 조각이지만 사람이 관리하는 단위는 문서다. 조각들을 제목으로
+    묶어서 "무엇이 들어 있는지" 보여주고, 지울 때 쓸 chunk_id를 함께 들고
+    있는다. 검색(SearchHit)과 달리 질문도 임베딩 계산도 필요 없다.
+    """
+
+    source: SourceName
+    title: str
+    url: str = ""
+    created_at: str = ""
+    submitted_by: str = ""
+    room_label: str = ""
+    chunk_ids: list[str] = Field(default_factory=list)
+
+    @property
+    def chunk_count(self) -> int:
+        return len(self.chunk_ids)
 
 
 def _build_chunk_id(document: Document, index: int) -> str:
@@ -105,12 +152,20 @@ def _build_chunk_id(document: Document, index: int) -> str:
 
 
 class Citation(BaseModel):
-    """답변에 붙는 출처 한 건."""
+    """답변에 붙는 출처 한 건.
+
+    사용자가 근거를 확인할 수 있도록 어느 방에서 언제 누가 쓴 내용인지를
+    함께 담는다. 카카오워크는 공개 URL이 없으므로 내용 미리보기로 대신한다.
+    """
 
     number: int = Field(ge=1)
     title: str
     url: str
     source: SourceName
+    room_label: str = ""
+    sender: str = ""
+    msg_date: str = ""
+    preview: str = ""
 
     @classmethod
     def from_chunks(cls, chunks: list[Chunk]) -> list["Citation"]:
@@ -133,6 +188,11 @@ class Citation(BaseModel):
                     title=chunk.title,
                     url=chunk.url,
                     source=chunk.source,
+                    room_label=chunk.room_label,
+                    sender=chunk.sender,
+                    msg_date=chunk.msg_date,
+                    # URL이 없는 카카오워크는 내용 일부로 근거를 보여준다.
+                    preview=chunk.text if not chunk.url else "",
                 )
             )
 

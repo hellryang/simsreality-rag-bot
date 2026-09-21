@@ -8,6 +8,9 @@ permissions:
   contents: read
   pull-requests: write
   issues: write
+  # claude-code-action 이 GitHub 인증에 OIDC 토큰을 쓴다. 이 줄이 없으면
+  # "Could not fetch an OIDC token" 으로 리뷰가 시작조차 하지 못한다.
+  id-token: write
 
 jobs:
   review:

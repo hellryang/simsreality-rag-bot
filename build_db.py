@@ -80,6 +80,31 @@ def store_chunks(chunks: list[Chunk], reset: bool = False) -> int:
     return store.count()
 
 
+def _confirm_reset() -> bool:
+    """--reset이 무엇을 파괴하는지 알리고 확인을 받는다.
+
+    reset()은 컬렉션을 통째로 지운다. Notion·Slack은 이 스크립트가 다시
+    채우지만 **카카오워크 문서는 복구할 수 없다.** KakaoWork에 대화·파일을
+    읽어오는 API가 없어서 재수집이 구조적으로 불가능하기 때문이다.
+    사용자가 봇에 제출한 대화와 업로드한 파일이 여기 해당한다.
+    """
+    kakao = VectorStore().list_documents("kakaowork")
+    if not kakao:
+        return True
+
+    chunks = sum(document.chunk_count for document in kakao)
+    print(f"\n[!] --reset은 벡터 DB를 통째로 비웁니다.")
+    print(f"    카카오워크로 제출된 문서 {len(kakao)}건(조각 {chunks}개)이 함께 사라지며,")
+    print("    이쪽은 재수집할 방법이 없어 영구 소실됩니다.")
+    for document in kakao[:5]:
+        print(f"      - {document.title}")
+    if len(kakao) > 5:
+        print(f"      ... 외 {len(kakao) - 5}건")
+    print("\n    특정 문서만 지우려면:  python manage_docs.py --delete \"<제목>\"")
+
+    return input("\n그래도 전부 비울까요? [y/N] ").strip().lower() in ("y", "yes")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Notion 문서를 벡터 DB에 적재한다")
     parser.add_argument("--limit", type=int, default=None, help="가져올 문서 수 제한")
@@ -87,6 +112,10 @@ def main() -> None:
     args = parser.parse_args()
 
     setup_cli_logging()
+
+    if args.reset and not _confirm_reset():
+        print("취소했습니다.")
+        return
 
     print("\n[1/3] Notion에서 문서를 수집합니다...")
     documents = asyncio.run(collect_all(limit=args.limit))

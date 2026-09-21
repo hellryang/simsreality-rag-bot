@@ -112,6 +112,9 @@ def test_embed_texts_returns_one_vector_per_input():
 
     첫 실행 때 모델 약 500MB를 내려받으므로 이 테스트만 느릴 수 있다.
     """
+    # 임베딩 모델(sentence-transformers)은 requirements 에서 선택이다.
+    # 설치하지 않은 환경(배포 서버, CI)에서는 건너뛴다.
+    pytest.importorskip("sentence_transformers")
     from app.services.embedder import embed_texts
 
     vectors = embed_texts(["배포 일정이 어떻게 되나요", "회의록 정리"])
@@ -133,6 +136,10 @@ def _sample_store(tmp_path):
     임베딩이 불안정해서, 관련 없는 문서와 유사도 차이가 0.01 수준까지 좁아진다.
     실제 수집물은 수백 자 단위이므로 그 조건으로 검증한다.
     """
+    # 벡터 패키지(chromadb·sentence-transformers)는 requirements 에서 선택이다.
+    # 설치하지 않은 환경(배포 서버, CI)에서는 이 테스트를 건너뛴다.
+    pytest.importorskip("chromadb")
+    pytest.importorskip("sentence_transformers")
     from app.services.vector_store import VectorStore
 
     deploy = (
@@ -192,6 +199,10 @@ def test_adding_same_chunk_twice_upserts(tmp_path):
 
     chunk_id가 같으면 덮어쓰기(upsert)로 처리되어야 한다.
     """
+    # 벡터 패키지(chromadb·sentence-transformers)는 requirements 에서 선택이다.
+    # 설치하지 않은 환경(배포 서버, CI)에서는 이 테스트를 건너뛴다.
+    pytest.importorskip("chromadb")
+    pytest.importorskip("sentence_transformers")
     from app.services.vector_store import VectorStore
 
     store = VectorStore(persist_dir=str(tmp_path))
@@ -268,3 +279,149 @@ def test_ordinary_sentence_is_untouched():
     original = "내일 3시에 회의실에서 봅시다"
 
     assert scrub_pii(original) == original
+
+
+# ====================================================================
+# 문서 목록 조회 / 삭제
+# ====================================================================
+
+
+def _doc(title: str, source: str = "kakaowork", submitted_by: str = "") -> Document:
+    return Document(
+        text=LONG_TEXT, source=source, title=title, submitted_by=submitted_by
+    )
+
+
+def _filled_store(tmp_path, *documents: Document):
+    """문서를 조각내어 넣은 저장소. import는 이 파일의 관례대로 함수 안에서."""
+    from app.services.embedder import chunk_documents
+    # 벡터 패키지(chromadb·sentence-transformers)는 requirements 에서 선택이다.
+    # 설치하지 않은 환경(배포 서버, CI)에서는 이 테스트를 건너뛴다.
+    pytest.importorskip("chromadb")
+    pytest.importorskip("sentence_transformers")
+    from app.services.vector_store import VectorStore
+
+    store = VectorStore(persist_dir=str(tmp_path))
+    store.add(chunk_documents(list(documents)))
+    return store
+
+
+def test_list_documents_groups_chunks_by_document(tmp_path):
+    store = _filled_store(tmp_path, _doc("첫 문서"), _doc("둘째 문서"))
+
+    documents = store.list_documents()
+
+    assert {d.title for d in documents} == {"첫 문서", "둘째 문서"}
+    assert all(d.chunk_count >= 1 for d in documents)
+
+
+def test_list_documents_filters_by_source(tmp_path):
+    store = _filled_store(tmp_path, _doc("카카오"), _doc("노션", source="notion"))
+
+    assert [d.title for d in store.list_documents("kakaowork")] == ["카카오"]
+    assert [d.title for d in store.list_documents("notion")] == ["노션"]
+
+
+def test_list_documents_keeps_the_submitter(tmp_path):
+    """누가 올렸는지 남지 않으면 나중에 문제를 추적할 수 없다."""
+    store = _filled_store(tmp_path, _doc("제출한 대화", submitted_by="12050898"))
+
+    assert store.list_documents()[0].submitted_by == "12050898"
+
+
+def test_delete_document_removes_every_chunk(tmp_path):
+    """조각이 하나라도 남으면 검색에 계속 걸리므로 전부 지워야 한다."""
+    store = _filled_store(tmp_path, _doc("지울 문서"), _doc("남길 문서"))
+    before = store.count()
+
+    removed = store.delete_document("지울 문서")
+
+    assert removed > 0
+    assert store.count() == before - removed
+    assert [d.title for d in store.list_documents()] == ["남길 문서"]
+
+
+def test_delete_document_is_a_no_op_for_an_unknown_title(tmp_path):
+    store = _filled_store(tmp_path, _doc("있는 문서"))
+
+    assert store.delete_document("없는 문서") == 0
+    assert store.count() > 0
+
+
+def test_delete_source_leaves_other_sources_alone(tmp_path):
+    """카카오워크만 비우고 Notion은 지키는 것이 이 메서드의 존재 이유다."""
+    store = _filled_store(tmp_path, _doc("카카오"), _doc("노션", source="notion"))
+
+    store.delete_source("kakaowork")
+
+    assert [d.title for d in store.list_documents()] == ["노션"]
+
+
+# --- 내 저장 관리 (조회 / 삭제) --------------------------------------
+
+
+def _kakao_doc(text, submitted_by, when):
+    return Document(
+        text=text, source="kakaowork", title=f"카카오워크 대화: {text} ({when})",
+        submitted_by=submitted_by, msg_date=when, room_label="백석대",
+    )
+
+
+def test_list_by_submitter_returns_only_that_users_docs(tmp_path):
+    from app.services.embedder import chunk_documents
+    # 벡터 패키지(chromadb·sentence-transformers)는 requirements 에서 선택이다.
+    # 설치하지 않은 환경(배포 서버, CI)에서는 이 테스트를 건너뛴다.
+    pytest.importorskip("chromadb")
+    pytest.importorskip("sentence_transformers")
+    from app.services.vector_store import VectorStore
+
+    store = VectorStore(persist_dir=str(tmp_path))
+    store.add(chunk_documents([
+        _kakao_doc("내 글1", "user-A", "2026-09-01T10:00"),
+        _kakao_doc("내 글2", "user-A", "2026-09-01T11:00"),
+        _kakao_doc("남의 글", "user-B", "2026-09-01T12:00"),
+    ]))
+
+    mine = store.list_by_submitter("user-A")
+
+    assert {m["text"] for m in mine} == {"내 글1", "내 글2"}
+
+
+def test_list_by_submitter_is_newest_first(tmp_path):
+    from app.services.embedder import chunk_documents
+    # 벡터 패키지(chromadb·sentence-transformers)는 requirements 에서 선택이다.
+    # 설치하지 않은 환경(배포 서버, CI)에서는 이 테스트를 건너뛴다.
+    pytest.importorskip("chromadb")
+    pytest.importorskip("sentence_transformers")
+    from app.services.vector_store import VectorStore
+
+    store = VectorStore(persist_dir=str(tmp_path))
+    store.add(chunk_documents([
+        _kakao_doc("먼저", "user-A", "2026-09-01T10:00"),
+        _kakao_doc("나중", "user-A", "2026-09-01T15:00"),
+    ]))
+
+    mine = store.list_by_submitter("user-A")
+
+    assert [m["text"] for m in mine] == ["나중", "먼저"]
+
+
+def test_delete_by_ids_removes_the_chosen_chunk(tmp_path):
+    from app.services.embedder import chunk_documents
+    # 벡터 패키지(chromadb·sentence-transformers)는 requirements 에서 선택이다.
+    # 설치하지 않은 환경(배포 서버, CI)에서는 이 테스트를 건너뛴다.
+    pytest.importorskip("chromadb")
+    pytest.importorskip("sentence_transformers")
+    from app.services.vector_store import VectorStore
+
+    store = VectorStore(persist_dir=str(tmp_path))
+    store.add(chunk_documents([
+        _kakao_doc("지울 글", "user-A", "2026-09-01T10:00"),
+        _kakao_doc("남길 글", "user-A", "2026-09-01T11:00"),
+    ]))
+    target = [m["chunk_id"] for m in store.list_by_submitter("user-A") if m["text"] == "지울 글"]
+
+    removed = store.delete_by_ids(target)
+
+    assert removed == 1
+    assert [m["text"] for m in store.list_by_submitter("user-A")] == ["남길 글"]

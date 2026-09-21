@@ -11,3 +11,9 @@ chroma_data/
 .agents/
 .claude/
 .DS_Store
+
+# 런타임 상태 (저장 대상 방 목록 등)
+data/
+
+# 세션 인계 메모 (로컬 전용)
+HANDOFF.md
